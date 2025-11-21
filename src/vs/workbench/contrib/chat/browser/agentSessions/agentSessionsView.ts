@@ -14,7 +14,6 @@ import { IViewPaneOptions, ViewPane } from '../../../../browser/parts/views/view
 import { ViewPaneContainer } from '../../../../browser/parts/views/viewPaneContainer.js';
 import { IViewContainersRegistry, Extensions as ViewExtensions, ViewContainerLocation, IViewsRegistry, IViewDescriptor, IViewDescriptorService } from '../../../../common/views.js';
 import { ChatContextKeys } from '../../common/chatContextKeys.js';
-import { ChatConfiguration } from '../../common/constants.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IContextMenuService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
@@ -389,11 +388,7 @@ const agentSessionsViewDescriptor: IViewDescriptor = {
 		title: AGENT_SESSIONS_VIEW_TITLE
 	},
 	ctorDescriptor: new SyncDescriptor(AgentSessionsView),
-	when: ContextKeyExpr.and(
-		ChatContextKeys.Setup.hidden.negate(),
-		ChatContextKeys.Setup.disabled.negate(),
-		ContextKeyExpr.equals(`config.${ChatConfiguration.AgentSessionsViewLocation}`, 'single-view'),
-	)
+	when: ContextKeyExpr.false() // Hard-disable Agent Sessions; Codex owns Agent UI.
 };
 Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews([agentSessionsViewDescriptor], agentSessionsViewContainer);
 

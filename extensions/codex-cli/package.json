@@ -13,6 +13,8 @@
     "Other"
   ],
   "activationEvents": [
+    "onStartupFinished",
+    "onView:codexAgentView",
     "onCommand:codex.runTask"
   ],
   "main": "./out/extension.js",
@@ -22,7 +24,25 @@
         "command": "codex.runTask",
         "title": "Codex: Run Task"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "codexAgent",
+          "title": "Agent",
+          "icon": "media/agent.svg"
+        }
+      ]
+    },
+    "views": {
+      "codexAgent": [
+        {
+          "id": "codexAgentView",
+          "name": "Agent",
+          "type": "webview"
+        }
+      ]
+    }
   },
   "scripts": {
     "compile": "gulp compile-extension:codex-cli",
@@ -30,7 +50,8 @@
   },
   "files": [
     "out/**",
-    "bin/**"
+    "bin/**",
+    "media/**"
   ],
   "devDependencies": {
     "@types/node": "22.x"

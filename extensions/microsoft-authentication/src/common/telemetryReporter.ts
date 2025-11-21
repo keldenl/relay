@@ -115,11 +115,12 @@ export class MicrosoftAuthenticationTelemetryReporter implements IExperimentatio
 		let brokerStatusCode: string | undefined;
 		let brokerTag: string | undefined;
 
-		// Extract platform broker error information if available
-		if (error.platformBrokerError) {
-			brokerErrorCode = error.platformBrokerError.errorCode;
-			brokerStatusCode = `${error.platformBrokerError.statusCode}`;
-			brokerTag = error.platformBrokerError.tag;
+		// Extract platform broker error information if available (newer MSAL surfaces it as platformBrokerError)
+		const platformBrokerError = (error as unknown as { platformBrokerError?: { errorCode?: string; statusCode?: number; tag?: string } }).platformBrokerError;
+		if (platformBrokerError) {
+			brokerErrorCode = platformBrokerError.errorCode;
+			brokerStatusCode = `${platformBrokerError.statusCode}`;
+			brokerTag = platformBrokerError.tag;
 		}
 
 		/* __GDPR__
