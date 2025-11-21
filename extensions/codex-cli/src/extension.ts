@@ -4,29 +4,67 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
-import * as fs from 'fs';
-import { getBundledCodexPath } from './paths';
+import { CodexBinaryError, CodexClient } from './codexClient';
+
+const output = vscode.window.createOutputChannel('Codex');
 
 export function activate(context: vscode.ExtensionContext): void {
-	const disposable = vscode.commands.registerCommand('codex.runTask', () => {
-		try {
-			const codexPath = getBundledCodexPath(context);
-			if (!fs.existsSync(codexPath)) {
-				vscode.window.showErrorMessage(`Bundled Codex CLI not found at ${codexPath}`);
-				return;
-			}
+	const codexClient = new CodexClient(context);
+	// TODO: Wire Codex events into actual apply-edits flow when available.
 
-			console.log(`[Codex CLI] Bundled binary: ${codexPath}`);
-			vscode.window.showInformationMessage(`Codex CLI path: ${codexPath}`);
+	const disposable = vscode.commands.registerCommand('codex.runTask', async () => {
+		const prompt = await vscode.window.showInputBox({
+			prompt: 'What should Codex do?',
+			placeHolder: 'Describe the task you want Codex to execute'
+		});
+
+		if (!prompt) {
+			return;
+		}
+
+		const workspaceFolders = vscode.workspace.workspaceFolders;
+		if (!workspaceFolders || workspaceFolders.length === 0) {
+			vscode.window.showErrorMessage('Open a workspace folder before running Codex.');
+			return;
+		}
+
+		const cwd = workspaceFolders[0].uri.fsPath;
+
+		output.clear();
+		output.appendLine(`Prompt: ${prompt}`);
+		output.appendLine(`CWD: ${cwd}`);
+		output.show(true);
+
+		try {
+			await codexClient.runExec(prompt, cwd, (evt) => {
+				output.appendLine(JSON.stringify(evt, null, 2));
+			});
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err);
-			vscode.window.showErrorMessage(`Codex CLI path error: ${message}`);
+			const message = formatFriendlyError(err);
+			vscode.window.showErrorMessage(message);
+			output.appendLine(`Error: ${message}`);
 		}
 	});
 
-	context.subscriptions.push(disposable);
+	context.subscriptions.push(disposable, output);
 }
 
 export function deactivate(): void {
 	// No-op for now
+}
+
+function formatFriendlyError(err: unknown): string {
+	if (err instanceof CodexBinaryError) {
+		return err.message;
+	}
+
+	if (err && typeof err === 'object' && Object.prototype.hasOwnProperty.call(err, 'message')) {
+		const nodeErr = err as NodeJS.ErrnoException;
+		if (nodeErr.code === 'ENOENT') {
+			return 'Codex CLI binary not found or not executable.';
+		}
+		return String(nodeErr.message);
+	}
+
+	return 'Codex CLI failed to start.';
 }
