@@ -5,12 +5,26 @@
 
 import * as vscode from 'vscode';
 import { CodexBinaryError, CodexClient } from './codexClient';
+import { AgentViewProvider } from './agentView';
 
 const output = vscode.window.createOutputChannel('Codex');
 
 export function activate(context: vscode.ExtensionContext): void {
+	// Make sure the secondary sidebar is visible and focus our container by default.
+	void vscode.commands.executeCommand('workbench.action.focusAuxiliaryBar').then(() => {
+		void vscode.commands.executeCommand('workbench.view.extension.codexAgent');
+	});
+
 	const codexClient = new CodexClient(context);
 	// TODO: Wire Codex events into actual apply-edits flow when available.
+
+	context.subscriptions.push(
+		vscode.window.registerWebviewViewProvider(
+			AgentViewProvider.viewId,
+			new AgentViewProvider(context),
+			{ webviewOptions: { retainContextWhenHidden: true } }
+		)
+	);
 
 	const disposable = vscode.commands.registerCommand('codex.runTask', async () => {
 		const prompt = await vscode.window.showInputBox({
@@ -50,7 +64,7 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
-	// No-op for now
+	// No-op
 }
 
 function formatFriendlyError(err: unknown): string {

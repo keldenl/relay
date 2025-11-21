@@ -58,7 +58,7 @@ export class CodexClient {
 				crlfDelay: Infinity
 			});
 
-			rl.on('line', (line) => {
+			rl.on('line', (line: string) => {
 				const trimmed = line.trim();
 				if (!trimmed) {
 					return;
@@ -76,11 +76,11 @@ export class CodexClient {
 				console.error('Codex stderr:', buf.toString());
 			});
 
-			child.on('error', (err) => {
+			child.on('error', (err: Error) => {
 				reject(err);
 			});
 
-			child.on('exit', (code) => {
+			child.on('exit', (code: number | null) => {
 				if (code === 0) {
 					resolve();
 				} else {
