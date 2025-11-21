@@ -4,12 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
-import { CodexClient } from './codexClient';
+import { CodexBinaryError, CodexClient } from './codexClient';
 
 const output = vscode.window.createOutputChannel('Codex');
 
 export function activate(context: vscode.ExtensionContext): void {
 	const codexClient = new CodexClient(context);
+	// TODO: Wire Codex events into actual apply-edits flow when available.
 
 	const disposable = vscode.commands.registerCommand('codex.runTask', async () => {
 		const prompt = await vscode.window.showInputBox({
@@ -53,6 +54,10 @@ export function deactivate(): void {
 }
 
 function formatFriendlyError(err: unknown): string {
+	if (err instanceof CodexBinaryError) {
+		return err.message;
+	}
+
 	if (err && typeof err === 'object' && Object.prototype.hasOwnProperty.call(err, 'message')) {
 		const nodeErr = err as NodeJS.ErrnoException;
 		if (nodeErr.code === 'ENOENT') {

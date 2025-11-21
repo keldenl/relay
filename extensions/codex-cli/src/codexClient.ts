@@ -9,6 +9,13 @@ import * as readline from 'readline';
 import * as vscode from 'vscode';
 import { getBundledCodexPath } from './paths';
 
+export class CodexBinaryError extends Error {
+	constructor(message: string, public readonly binaryPath: string) {
+		super(message);
+		this.name = 'CodexBinaryError';
+	}
+}
+
 export interface CodexEvent {
 	type: string;
 	[key: string]: any;
@@ -26,8 +33,10 @@ export class CodexClient {
 				return reject(err);
 			}
 
-			if (!fs.existsSync(codexPath)) {
-				return reject(new Error(`Codex CLI binary not found at ${codexPath}`));
+			try {
+				ensureBinaryUsable(codexPath);
+			} catch (err) {
+				return reject(err);
 			}
 
 			const args = [
@@ -79,5 +88,29 @@ export class CodexClient {
 				}
 			});
 		});
+	}
+}
+
+function ensureBinaryUsable(codexPath: string): void {
+	if (!fs.existsSync(codexPath)) {
+		throw new CodexBinaryError(`Bundled Codex CLI not found. Please place the Codex CLI binary at: ${codexPath} and mark it executable (chmod +x).`, codexPath);
+	}
+
+	const stat = fs.statSync(codexPath);
+	if (!stat.isFile()) {
+		throw new CodexBinaryError(`Bundled Codex CLI not found. Please place the Codex CLI binary at: ${codexPath} and mark it executable (chmod +x).`, codexPath);
+	}
+
+	// Guard against obvious placeholders: empty files or non-executable bits on POSIX.
+	if (stat.size === 0) {
+		throw new CodexBinaryError(`Bundled Codex CLI looks like a placeholder (zero bytes). Replace it with the real binary at: ${codexPath} and mark it executable (chmod +x).`, codexPath);
+	}
+
+	if (process.platform !== 'win32') {
+		try {
+			fs.accessSync(codexPath, fs.constants.X_OK);
+		} catch {
+			throw new CodexBinaryError(`Bundled Codex CLI is not executable. Please run: chmod +x "${codexPath}".`, codexPath);
+		}
 	}
 }
