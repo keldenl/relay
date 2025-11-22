@@ -13,6 +13,7 @@ type WebviewMessage =
 	| { type: 'appendMessage'; role?: AgentMessageRole; text?: string; command?: string }
 	| { type: 'clearMessages' }
 	| { type: 'setBusy'; busy?: boolean }
+	| { type: 'reasoningUpdate'; text?: string }
 	| { type: 'authState'; status: AuthStatus; detail?: string };
 
 export class AgentViewProvider implements vscode.WebviewViewProvider {
@@ -127,15 +128,12 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 				role: 'assistant',
 				text: evt.item.text ?? '',
 			});
+			this.postToWebview(webview, { type: 'reasoningUpdate', text: undefined });
 			return;
 		}
 
 		if (evt.type === 'item.completed' && evt.item?.type === 'reasoning') {
-			this.postToWebview(webview, {
-				type: 'appendMessage',
-				role: 'assistant',
-				text: evt.item.text ?? '',
-			});
+			this.postToWebview(webview, { type: 'reasoningUpdate', text: evt.item.text ?? '' });
 			return;
 		}
 
@@ -381,6 +379,37 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			background: var(--vscode-editor-background);
 		}
 
+		.reasoning-bar {
+			display: flex;
+			align-items: center;
+			gap: 10px;
+			padding: 10px 12px;
+			border-top: 1px solid var(--vscode-panel-border);
+			background: var(--vscode-editorWidget-background);
+			box-shadow: 0 -1px 0 var(--vscode-widget-shadow, transparent);
+		}
+
+		.reasoning-bar[hidden] {
+			display: none;
+		}
+
+		.reasoning-spinner {
+			width: 14px;
+			height: 14px;
+			border-radius: 50%;
+			border: 2px solid var(--vscode-foreground);
+			border-color: var(--vscode-foreground) transparent var(--vscode-foreground) transparent;
+			animation: spin 1s linear infinite;
+			flex-shrink: 0;
+		}
+
+		.reasoning-text {
+			font-size: 12px;
+			color: var(--vscode-foreground);
+			font-weight: 600;
+			line-height: 1.4;
+		}
+
 		.message {
 			display: flex;
 			flex-direction: column;
@@ -486,6 +515,11 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			opacity: 0.6;
 			cursor: default;
 		}
+
+		@keyframes spin {
+			0% { transform: rotate(0deg); }
+			100% { transform: rotate(360deg); }
+		}
 	</style>
 </head>
 <body>
@@ -501,6 +535,10 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			<div class="agent-status" data-status>Ready</div>
 		</header>
 		<section class="messages" aria-label="Agent messages" data-messages></section>
+		<div class="reasoning-bar" data-reasoning hidden aria-hidden="true">
+			<div class="reasoning-spinner" aria-hidden="true"></div>
+			<div class="reasoning-text" data-reasoning-text>Thinking…</div>
+		</div>
 		<div class="input-row">
 			<form aria-label="Send a prompt" data-form>
 				<input type="text" name="prompt" placeholder="Ask the Agent..." aria-label="Agent prompt" data-input />
@@ -519,11 +557,14 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			const agentShell = document.querySelector('[data-agent-shell]');
 			const loginShell = document.querySelector('[data-login-shell]');
 			const loginButton = document.querySelector('[data-login-button]');
+			const reasoningBar = document.querySelector('[data-reasoning]');
+			const reasoningText = document.querySelector('[data-reasoning-text]');
 
 			/** @type {Array<{ role: string, text: string, command?: string }>} */
 			const messages = [];
 			let busy = false;
 			let authState = 'checking';
+			let currentReasoning = '';
 
 			const roleLabel = (role) => {
 				if (role === 'assistant') return 'Assistant';
@@ -550,6 +591,20 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			// We intentionally keep rendering simple (plain text + preserved newlines) to avoid regex pitfalls.
 			function renderPlain(text) {
 				return text ?? '';
+			}
+
+			function setReasoning(text) {
+				currentReasoning = (text ?? '').trim();
+				if (!reasoningBar || !reasoningText) {
+					return;
+				}
+
+				const shouldShow = busy || currentReasoning.length > 0;
+				const displayText = currentReasoning || 'Thinking…';
+
+				reasoningBar.hidden = !shouldShow;
+				reasoningBar.setAttribute('aria-hidden', shouldShow ? 'false' : 'true');
+				reasoningText.textContent = shouldShow ? displayText : '';
 			}
 
 			function render() {
@@ -603,6 +658,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 				}
 				if (input) input.disabled = busy;
 				if (sendButton) sendButton.disabled = busy;
+				setReasoning(busy ? currentReasoning : '');
 			}
 
 			function sendPrompt() {
@@ -643,10 +699,14 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 						break;
 					case 'clearMessages':
 						messages.length = 0;
+						setReasoning('');
 						render();
 						break;
 					case 'setBusy':
 						setBusy(message.busy);
+						break;
+					case 'reasoningUpdate':
+						setReasoning(message.text ?? '');
 						break;
 					case 'authState':
 						setAuthState({ status: message.status, detail: message.detail });
