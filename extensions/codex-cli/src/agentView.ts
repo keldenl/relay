@@ -5,12 +5,20 @@
 
 import * as vscode from 'vscode';
 import { CodexBinaryError, CodexClient, CodexEvent } from './codexClient';
+import { summarizeCommand } from './commandSummary';
 
 type AgentMessageRole = 'assistant' | 'command' | 'system' | 'user';
 type AuthStatus = 'checking' | 'loggedIn' | 'loggedOut' | 'loggingIn' | 'error';
 
 type WebviewMessage =
-	| { type: 'appendMessage'; role?: AgentMessageRole; text?: string; command?: string }
+	| {
+		type: 'appendMessage';
+		role?: AgentMessageRole;
+		text?: string;
+		command?: string;
+		friendlyTitle?: string;
+		friendlySummary?: string;
+	}
 	| { type: 'clearMessages' }
 	| { type: 'setBusy'; busy?: boolean }
 	| { type: 'reasoningUpdate'; text?: string }
@@ -140,11 +148,14 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		if (evt.type === 'item.completed' && evt.item?.type === 'command_execution') {
 			const text = evt.item.aggregated_output ?? '';
 			const command = evt.item.command ?? '';
+			const summary = summarizeCommand(command);
 			this.postToWebview(webview, {
 				type: 'appendMessage',
 				role: 'command',
 				text,
-				command,
+				command: summary.displayCommand,
+				friendlyTitle: summary.title,
+				friendlySummary: summary.summary,
 			});
 		}
 	}
@@ -560,7 +571,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			const reasoningBar = document.querySelector('[data-reasoning]');
 			const reasoningText = document.querySelector('[data-reasoning-text]');
 
-			/** @type {Array<{ role: string, text: string, command?: string }>} */
+			/** @type {Array<{ role: string, text: string, command?: string, friendlyTitle?: string, friendlySummary?: string }>} */
 			const messages = [];
 			let busy = false;
 			let authState = 'checking';
@@ -619,14 +630,15 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
 					const meta = document.createElement('div');
 					meta.className = 'meta';
-					meta.textContent = roleLabel(msg.role);
+					meta.textContent = msg.friendlyTitle || roleLabel(msg.role);
 
 					let body;
 
 					if (msg.role === 'command') {
 						const title = document.createElement('div');
 						title.className = 'command-title';
-						title.textContent = msg.command ? '> ' + msg.command : 'Command output';
+						title.textContent = msg.friendlySummary
+							|| (msg.command ? '> ' + msg.command : 'Command output');
 
 						body = document.createElement('pre');
 						body.className = 'body';
@@ -694,7 +706,13 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
 				switch (message.type) {
 					case 'appendMessage':
-						messages.push({ role: message.role || 'assistant', text: message.text ?? '', command: message.command });
+						messages.push({
+							role: message.role || 'assistant',
+							text: message.text ?? '',
+							command: message.command,
+							friendlyTitle: message.friendlyTitle,
+							friendlySummary: message.friendlySummary,
+						});
 						render();
 						break;
 					case 'clearMessages':
