@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { CodexBinaryError, CodexClient, CodexEvent } from './codexClient';
 import { summarizeCommand } from './commandSummary';
 
@@ -18,6 +19,8 @@ type WebviewMessage =
 		command?: string;
 		friendlyTitle?: string;
 		friendlySummary?: string;
+		targets?: Array<{ label: string; path: string; isDir?: boolean }>;
+		parsed?: ReturnType<typeof summarizeCommand>['parsed'];
 	}
 	| { type: 'clearMessages' }
 	| { type: 'setBusy'; busy?: boolean }
@@ -30,6 +33,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 	private readonly codexClient: CodexClient;
 	private busy = false;
 	private authStatus: AuthStatus = 'checking';
+	private lastCwd: string | undefined;
 
 	constructor(private readonly context: vscode.ExtensionContext) {
 		this.codexClient = new CodexClient(context);
@@ -60,6 +64,25 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
 			if (message?.type === 'requestStatus') {
 				void this.refreshAuthState(webviewView);
+			}
+
+			if (message?.type === 'openPath' && typeof message.path === 'string') {
+				const target = vscode.Uri.file(message.path);
+				if (message.isDir) {
+					void vscode.window
+						.showWarningMessage(
+							`Open folder "${path.basename(message.path)}" in Finder?`,
+							{ modal: true },
+							'Open'
+						)
+						.then((choice) => {
+							if (choice === 'Open') {
+								void vscode.commands.executeCommand('revealFileInOS', target);
+							}
+						});
+				} else {
+					void vscode.commands.executeCommand('vscode.open', target);
+				}
 			}
 		});
 	}
@@ -101,6 +124,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		}
 
 		const cwd = workspaceFolders[0].uri.fsPath;
+		this.lastCwd = cwd;
 
 		this.busy = true;
 		this.postToWebview(webview, { type: 'setBusy', busy: true });
@@ -149,13 +173,34 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			const text = evt.item.aggregated_output ?? '';
 			const command = evt.item.command ?? '';
 			const summary = summarizeCommand(command);
+			const parsedWithAbs = summary.parsed.map((p) => {
+				const rawPath = p.path;
+				const abs = rawPath
+					? path.isAbsolute(rawPath)
+						? rawPath
+						: this.lastCwd
+							? path.join(this.lastCwd, rawPath)
+							: rawPath
+					: undefined;
+				return { ...p, absPath: abs };
+			});
+			const targets = parsedWithAbs
+				.filter((p) => p.absPath)
+				.map((p) => ({
+					label: p.name ?? p.path ?? p.raw,
+					path: p.absPath!,
+					isDir: p.kind === 'list',
+				}));
 			this.postToWebview(webview, {
 				type: 'appendMessage',
 				role: 'command',
 				text,
 				command: summary.displayCommand,
-				friendlyTitle: summary.title,
+				// Drop "Explored" wording; keep "Ran" for non-exploratory.
+				friendlyTitle: summary.title === 'Explored' ? '' : summary.title,
 				friendlySummary: summary.summary,
+				targets,
+				parsed: parsedWithAbs,
 			});
 		}
 	}
@@ -460,6 +505,10 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			line-height: 1.2;
 		}
 
+		a {
+			color: var(--vscode-textLink-foreground);
+		}
+
 		.message.system {
 			border: 1px dashed var(--vscode-textBlockQuote-border);
 			color: var(--vscode-descriptionForeground);
@@ -571,7 +620,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			const reasoningBar = document.querySelector('[data-reasoning]');
 			const reasoningText = document.querySelector('[data-reasoning-text]');
 
-			/** @type {Array<{ role: string, text: string, command?: string, friendlyTitle?: string, friendlySummary?: string }>} */
+			/** @type {Array<{ role: string, text: string, command?: string, friendlyTitle?: string, friendlySummary?: string, targets?: Array<{label: string, path: string, isDir?: boolean}>, parsed?: any[] }>} */
 			const messages = [];
 			let busy = false;
 			let authState = 'checking';
@@ -602,6 +651,54 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			// We intentionally keep rendering simple (plain text + preserved newlines) to avoid regex pitfalls.
 			function renderPlain(text) {
 				return text ?? '';
+			}
+
+			function buildSummary(msg) {
+				// If we have parsed commands, render inline with links.
+				if (Array.isArray(msg.parsed) && msg.parsed.length > 0) {
+					const span = document.createElement('span');
+						msg.parsed.forEach((p, idx) => {
+							if (idx > 0) span.appendChild(document.createTextNode(' | '));
+						if (p.kind === 'read') {
+							span.appendChild(document.createTextNode('Read '));
+								span.appendChild(makeLink(p.label || p.name || p.path || p.raw, p.absPath || p.path, false));
+							} else if (p.kind === 'list') {
+								span.appendChild(document.createTextNode('Listed '));
+								span.appendChild(makeLink(p.label || p.name || p.path || '.', p.absPath || p.path || '.', true));
+							} else if (p.kind === 'search') {
+								span.appendChild(document.createTextNode('Searched '));
+								if (p.query) {
+									span.appendChild(document.createTextNode('"' + p.query + '"'));
+									if (p.path) {
+										span.appendChild(document.createTextNode(' in '));
+										span.appendChild(makeLink(p.label || p.name || p.path, p.absPath || p.path, true));
+									}
+								} else if (p.path) {
+									span.appendChild(makeLink(p.label || p.name || p.path, p.absPath || p.path, true));
+								} else {
+									span.appendChild(document.createTextNode('files'));
+								}
+							} else {
+								span.appendChild(document.createTextNode('Ran ' + p.raw));
+						}
+					});
+					return span;
+				}
+				const fallback = document.createElement('span');
+				fallback.textContent = msg.friendlySummary
+					|| (msg.command ? '> ' + msg.command : 'Command output');
+				return fallback;
+			}
+
+			function makeLink(label, path, isDir) {
+				const a = document.createElement('a');
+				a.href = '#';
+				a.textContent = label;
+				a.addEventListener('click', (e) => {
+					e.preventDefault();
+					vscode.postMessage({ type: 'openPath', path, isDir: Boolean(isDir) });
+				});
+				return a;
 			}
 
 			function setReasoning(text) {
@@ -637,8 +734,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 					if (msg.role === 'command') {
 						const title = document.createElement('div');
 						title.className = 'command-title';
-						title.textContent = msg.friendlySummary
-							|| (msg.command ? '> ' + msg.command : 'Command output');
+						title.appendChild(buildSummary(msg));
 
 						body = document.createElement('pre');
 						body.className = 'body';
@@ -705,16 +801,18 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 				}
 
 				switch (message.type) {
-					case 'appendMessage':
-						messages.push({
-							role: message.role || 'assistant',
-							text: message.text ?? '',
-							command: message.command,
-							friendlyTitle: message.friendlyTitle,
-							friendlySummary: message.friendlySummary,
-						});
-						render();
-						break;
+						case 'appendMessage':
+							messages.push({
+								role: message.role || 'assistant',
+								text: message.text ?? '',
+								command: message.command,
+								friendlyTitle: message.friendlyTitle,
+								friendlySummary: message.friendlySummary,
+								targets: message.targets || [],
+								parsed: message.parsed || [],
+							});
+							render();
+							break;
 					case 'clearMessages':
 						messages.length = 0;
 						setReasoning('');

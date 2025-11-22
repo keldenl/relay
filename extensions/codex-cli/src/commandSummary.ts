@@ -76,7 +76,9 @@ function parseCommands(tokens: string[]): ParsedCommand[] {
 	let cwd: string | undefined;
 
 	for (const segment of filteredSegments) {
-		if (segment.length === 0) continue;
+		if (segment.length === 0) {
+			continue;
+		}
 
 		// Track cd to resolve relative paths.
 		if (segment[0] === 'cd' && segment[1]) {
@@ -112,7 +114,8 @@ function summarizeMainTokens(tokens: string[]): ParsedCommand {
 			return {
 				kind: 'list',
 				raw: joinTokens(tokens),
-				path: pathArg ? shortDisplayPath(pathArg) : undefined,
+				path: pathArg ?? '.',
+				name: pathArg ? shortDisplayPath(pathArg) : '.',
 			};
 		}
 		case 'rg': {
@@ -125,7 +128,8 @@ function summarizeMainTokens(tokens: string[]): ParsedCommand {
 				kind: 'search',
 				raw: joinTokens(tokens),
 				query: query,
-				path: pathArg ? shortDisplayPath(pathArg) : undefined,
+				path: pathArg,
+				name: pathArg ? shortDisplayPath(pathArg) : undefined,
 			};
 		}
 		case 'fd': {
@@ -138,7 +142,8 @@ function summarizeMainTokens(tokens: string[]): ParsedCommand {
 				kind: 'search',
 				raw: joinTokens(tokens),
 				query,
-				path: pathArg ? shortDisplayPath(pathArg) : undefined,
+				path: pathArg,
+				name: pathArg ? shortDisplayPath(pathArg) : undefined,
 			};
 		}
 		case 'find': {
@@ -149,7 +154,8 @@ function summarizeMainTokens(tokens: string[]): ParsedCommand {
 				kind: 'search',
 				raw: joinTokens(tokens),
 				query: query ?? undefined,
-				path: pathArg ? shortDisplayPath(pathArg) : undefined,
+				path: pathArg ?? undefined,
+				name: pathArg ? shortDisplayPath(pathArg) : undefined,
 			};
 		}
 		case 'grep': {
@@ -159,7 +165,8 @@ function summarizeMainTokens(tokens: string[]): ParsedCommand {
 				kind: 'search',
 				raw: joinTokens(tokens),
 				query: nonFlags[0],
-				path: nonFlags[1] ? shortDisplayPath(nonFlags[1]) : undefined,
+				path: nonFlags[1] ?? undefined,
+				name: nonFlags[1] ? shortDisplayPath(nonFlags[1]) : undefined,
 			};
 		}
 		case 'cat': {
@@ -256,10 +263,15 @@ function normalizeToTokens(cmd: string): string[] {
 	return tokens;
 }
 
+const DOUBLE_QUOTE = '\u0022';
+const SINGLE_QUOTE = '\'';
+
+type QuoteChar = typeof DOUBLE_QUOTE | typeof SINGLE_QUOTE;
+
 function shellSplit(input: string): string[] {
 	const out: string[] = [];
 	let cur = '';
-	let quote: '"' | "'" | null = null;
+	let quote: QuoteChar | null = null;
 	let escaped = false;
 
 	for (const ch of input) {
@@ -268,7 +280,7 @@ function shellSplit(input: string): string[] {
 			escaped = false;
 			continue;
 		}
-		if (ch === '\\' && quote !== "'") {
+		if (ch === '\\' && quote !== SINGLE_QUOTE) {
 			escaped = true;
 			continue;
 		}
@@ -280,7 +292,7 @@ function shellSplit(input: string): string[] {
 			}
 			continue;
 		}
-		if (ch === '"' || ch === "'") {
+		if (ch === DOUBLE_QUOTE || ch === SINGLE_QUOTE) {
 			quote = ch;
 			continue;
 		}
@@ -294,13 +306,15 @@ function shellSplit(input: string): string[] {
 		cur += ch;
 	}
 
-	if (cur) out.push(cur);
+	if (cur) {
+		out.push(cur);
+	}
 	return out;
 }
 
 function unwrapQuotes(text: string): string {
 	if (text.length >= 2) {
-		if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
+		if ((text.startsWith(DOUBLE_QUOTE) && text.endsWith(DOUBLE_QUOTE)) || (text.startsWith(SINGLE_QUOTE) && text.endsWith(SINGLE_QUOTE))) {
 			return text.slice(1, -1);
 		}
 	}
@@ -312,18 +326,24 @@ function splitOnConnectors(tokens: string[]): string[][] {
 	let cur: string[] = [];
 	for (const t of tokens) {
 		if (t === '&&' || t === '||' || t === '|' || t === ';') {
-			if (cur.length) out.push(cur);
+			if (cur.length) {
+				out.push(cur);
+			}
 			cur = [];
 		} else {
 			cur.push(t);
 		}
 	}
-	if (cur.length) out.push(cur);
+	if (cur.length) {
+		out.push(cur);
+	}
 	return out;
 }
 
 function isSmallFormatting(tokens: string[], dropInPipeline: boolean): boolean {
-	if (!dropInPipeline || tokens.length === 0) return false;
+	if (!dropInPipeline || tokens.length === 0) {
+		return false;
+	}
 	const head = tokens[0];
 	if (
 		head === 'wc' || head === 'tr' || head === 'cut' || head === 'sort' || head === 'uniq' ||
@@ -395,7 +415,9 @@ function findFlagValue(args: string[], flags: string[]): string | undefined {
 }
 
 function isValidSedRange(arg?: string): boolean {
-	if (!arg) return false;
+	if (!arg) {
+		return false;
+	}
 	const core = arg.endsWith('p') ? arg.slice(0, -1) : arg;
 	return /^(\d+|\d+,\d+)$/.test(core);
 }
@@ -407,7 +429,9 @@ function extractHeadTailPath(args: string[]): string | undefined {
 	for (let i = 0; i < argsNoConnector.length; i++) {
 		const a = argsNoConnector[i];
 		if (i === 0 && (a === '-n' || a.startsWith('-n'))) {
-			if (a === '-n') i++; // skip the count
+			if (a === '-n') {
+				i++; // skip the count
+			}
 			continue;
 		}
 		stripped.push(a);
@@ -426,7 +450,9 @@ function isAbsLike(p: string): boolean {
 }
 
 function joinPaths(base: string, rel: string): string {
-	if (isAbsLike(rel)) return rel;
+	if (isAbsLike(rel)) {
+		return rel;
+	}
 	return path.normalize(path.join(base, rel));
 }
 
@@ -452,7 +478,9 @@ function isSameCommand(a: ParsedCommand, b: ParsedCommand): boolean {
 // -----------------------------------------------------------------------------
 
 function buildSummary(parsed: ParsedCommand[]): string | undefined {
-	if (parsed.length === 0) return undefined;
+	if (parsed.length === 0) {
+		return undefined;
+	}
 
 	const parts: string[] = [];
 
@@ -471,9 +499,9 @@ function buildSummary(parsed: ParsedCommand[]): string | undefined {
 	}
 	for (const search of searches) {
 		if (search.query && search.path) {
-			parts.push(`Searched “${search.query}” in ${search.path}`);
+			parts.push(`Searched "${search.query}" in ${search.path}`);
 		} else if (search.query) {
-			parts.push(`Searched “${search.query}”`);
+			parts.push(`Searched "${search.query}"`);
 		} else if (search.path) {
 			parts.push(`Searched ${search.path}`);
 		} else {
