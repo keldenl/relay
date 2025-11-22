@@ -21,20 +21,28 @@ export interface CodexEvent {
 	[key: string]: any;
 }
 
+export type LoginMode = 'chatgpt' | 'apiKey';
+
+export interface LoginStatusResult {
+	loggedIn: boolean;
+	mode?: LoginMode;
+	raw: string;
+}
+
 export class CodexClient {
 	constructor(private readonly context: vscode.ExtensionContext) { }
+
+	private resolveUsableCodexPath(): string {
+		const codexPath = getBundledCodexPath(this.context);
+		ensureBinaryUsable(codexPath);
+		return codexPath;
+	}
 
 	runExec(prompt: string, cwd: string, onEvent: (evt: CodexEvent) => void): Promise<void> {
 		return new Promise((resolve, reject) => {
 			let codexPath: string;
 			try {
-				codexPath = getBundledCodexPath(this.context);
-			} catch (err) {
-				return reject(err);
-			}
-
-			try {
-				ensureBinaryUsable(codexPath);
+				codexPath = this.resolveUsableCodexPath();
 			} catch (err) {
 				return reject(err);
 			}
@@ -86,6 +94,81 @@ export class CodexClient {
 				} else {
 					reject(new Error(`Codex exited with code ${code}`));
 				}
+			});
+		});
+	}
+
+	checkLoginStatus(): Promise<LoginStatusResult> {
+		return new Promise((resolve, reject) => {
+			let codexPath: string;
+			try {
+				codexPath = this.resolveUsableCodexPath();
+			} catch (err) {
+				return reject(err);
+			}
+
+			const child = cp.spawn(codexPath, ['login', 'status'], {
+				stdio: ['ignore', 'pipe', 'pipe']
+			});
+
+			let output = '';
+
+			child.stdout.on('data', (buf: Buffer) => {
+				output += buf.toString();
+			});
+
+			child.stderr.on('data', (buf: Buffer) => {
+				output += buf.toString();
+			});
+
+			child.on('error', (err: Error) => reject(err));
+
+			child.on('close', (code: number | null) => {
+				const raw = output.trim();
+				const loggedIn = code === 0;
+				let mode: LoginMode | undefined;
+				if (/ChatGPT/i.test(raw)) {
+					mode = 'chatgpt';
+				} else if (/API key/i.test(raw)) {
+					mode = 'apiKey';
+				}
+
+				resolve({ loggedIn, mode, raw });
+			});
+		});
+	}
+
+	runLogin(onOutput?: (text: string) => void): Promise<void> {
+		return new Promise((resolve, reject) => {
+			let codexPath: string;
+			try {
+				codexPath = this.resolveUsableCodexPath();
+			} catch (err) {
+				return reject(err);
+			}
+
+			const child = cp.spawn(codexPath, ['login'], {
+				stdio: ['ignore', 'pipe', 'pipe']
+			});
+
+			let output = '';
+			const forward = (buf: Buffer) => {
+				const text = buf.toString();
+				output += text;
+				onOutput?.(text);
+			};
+
+			child.stdout.on('data', forward);
+			child.stderr.on('data', forward);
+
+			child.on('error', (err: Error) => reject(err));
+
+			child.on('close', (code: number | null) => {
+				if (code === 0) {
+					resolve();
+					return;
+				}
+				reject(new Error(output.trim() || `Codex login exited with code ${code}`));
 			});
 		});
 	}

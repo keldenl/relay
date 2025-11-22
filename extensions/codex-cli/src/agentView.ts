@@ -7,12 +7,20 @@ import * as vscode from 'vscode';
 import { CodexBinaryError, CodexClient, CodexEvent } from './codexClient';
 
 type AgentMessageRole = 'assistant' | 'command' | 'system' | 'user';
+type AuthStatus = 'checking' | 'loggedIn' | 'loggedOut' | 'loggingIn' | 'error';
+
+type WebviewMessage =
+	| { type: 'appendMessage'; role?: AgentMessageRole; text?: string; command?: string }
+	| { type: 'clearMessages' }
+	| { type: 'setBusy'; busy?: boolean }
+	| { type: 'authState'; status: AuthStatus; detail?: string };
 
 export class AgentViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewId = 'codexAgentView';
 
 	private readonly codexClient: CodexClient;
 	private busy = false;
+	private authStatus: AuthStatus = 'checking';
 
 	constructor(private readonly context: vscode.ExtensionContext) {
 		this.codexClient = new CodexClient(context);
@@ -29,11 +37,20 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		};
 
 		webview.html = this.getHtmlForWebview(webview);
+		void this.refreshAuthState(webviewView);
 
 		webview.onDidReceiveMessage((message) => {
 			if (message?.type === 'submitPrompt') {
 				const prompt = typeof message.prompt === 'string' ? message.prompt : '';
 				void this.handlePrompt(webviewView, prompt);
+			}
+
+			if (message?.type === 'requestLogin') {
+				void this.handleLogin(webviewView);
+			}
+
+			if (message?.type === 'requestStatus') {
+				void this.refreshAuthState(webviewView);
 			}
 		});
 	}
@@ -43,6 +60,15 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		const trimmed = prompt.trim();
 
 		if (!trimmed) {
+			return;
+		}
+
+		if (this.authStatus !== 'loggedIn') {
+			this.postToWebview(webview, {
+				type: 'appendMessage',
+				role: 'system',
+				text: 'Please sign in to Codex before running the agent.',
+			});
 			return;
 		}
 
@@ -151,6 +177,36 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		return false;
 	}
 
+	private async refreshAuthState(webviewView: vscode.WebviewView): Promise<void> {
+		const webview = webviewView.webview;
+		this.authStatus = 'checking';
+		this.postAuthState(webview, 'checking', 'Checking Codex login status…');
+
+		try {
+			const status = await this.codexClient.checkLoginStatus();
+			this.authStatus = status.loggedIn ? 'loggedIn' : 'loggedOut';
+			const detail = status.raw || (status.loggedIn ? 'Logged in' : 'Not logged in');
+			this.postAuthState(webview, this.authStatus, detail);
+		} catch (err) {
+			this.authStatus = 'error';
+			this.postAuthState(webview, 'error', this.formatFriendlyError(err));
+		}
+	}
+
+	private async handleLogin(webviewView: vscode.WebviewView): Promise<void> {
+		const webview = webviewView.webview;
+		this.authStatus = 'loggingIn';
+		this.postAuthState(webview, 'loggingIn', 'Opening browser for Codex login…');
+
+		try {
+			await this.codexClient.runLogin();
+			await this.refreshAuthState(webviewView);
+		} catch (err) {
+			this.authStatus = 'error';
+			this.postAuthState(webview, 'error', this.formatFriendlyError(err));
+		}
+	}
+
 	private async simulateStream(webview: vscode.Webview, prompt: string, cwd: string): Promise<void> {
 		const fakeEvents: CodexEvent[] = [
 			{
@@ -189,7 +245,11 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		});
 	}
 
-	private postToWebview(webview: vscode.Webview, message: { type: string; role?: AgentMessageRole; text?: string; command?: string; busy?: boolean }): void {
+	private postAuthState(webview: vscode.Webview, status: AuthStatus, detail?: string): void {
+		this.postToWebview(webview, { type: 'authState', status, detail });
+	}
+
+	private postToWebview(webview: vscode.Webview, message: WebviewMessage): void {
 		webview.postMessage(message).then(undefined, console.error);
 	}
 
@@ -231,6 +291,52 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			flex-direction: column;
 			height: 100%;
 			background: var(--vscode-editor-background);
+		}
+
+		.login-shell {
+			flex: 1;
+			display: none;
+			padding: 24px;
+			background: var(--vscode-editor-background);
+			align-items: center;
+			justify-content: center;
+		}
+
+		.login-content {
+			display: flex;
+			flex-direction: column;
+			gap: 12px;
+			text-align: center;
+		}
+
+		.login-title {
+			font-size: 16px;
+			font-weight: 600;
+			letter-spacing: 0.2px;
+		}
+
+		.login-copy {
+			margin: 0;
+			color: var(--vscode-descriptionForeground);
+			line-height: 1.4;
+			font-size: 13px;
+		}
+
+		.login-button {
+			align-self: center;
+			border-radius: 6px;
+			height: 34px;
+			padding: 0 16px;
+			border: 1px solid var(--vscode-button-border, transparent);
+			background: var(--vscode-button-background);
+			color: var(--vscode-button-foreground);
+			font-size: 12px;
+			font-weight: 600;
+		}
+
+		.login-button:disabled {
+			opacity: 0.75;
+			cursor: default;
 		}
 
 		.agent-header {
@@ -383,7 +489,13 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 	</style>
 </head>
 <body>
-	<div class="agent-shell">
+	<div class="login-shell" data-login-shell>
+		<div class="login-content">
+			<div class="login-title">Sign in to Codex</div>
+			<button type="button" class="login-button" data-login-button>Log in with ChatGPT</button>
+		</div>
+	</div>
+	<div class="agent-shell" data-agent-shell>
 		<header class="agent-header">
 			<div class="agent-title">Agent</div>
 			<div class="agent-status" data-status>Ready</div>
@@ -404,10 +516,14 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			const input = document.querySelector('[data-input]');
 			const sendButton = document.querySelector('[data-send]');
 			const statusEl = document.querySelector('[data-status]');
+			const agentShell = document.querySelector('[data-agent-shell]');
+			const loginShell = document.querySelector('[data-login-shell]');
+			const loginButton = document.querySelector('[data-login-button]');
 
 			/** @type {Array<{ role: string, text: string, command?: string }>} */
 			const messages = [];
 			let busy = false;
+			let authState = 'checking';
 
 			const roleLabel = (role) => {
 				if (role === 'assistant') return 'Assistant';
@@ -416,6 +532,18 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 				if (role === 'user') return 'You';
 				return 'Agent';
 			};
+
+			function setAuthState(next) {
+				const isLoggedIn = next.status === 'loggedIn';
+				if (agentShell) agentShell.style.display = isLoggedIn ? 'flex' : 'none';
+				if (loginShell) loginShell.style.display = isLoggedIn ? 'none' : 'flex';
+
+				const loggingIn = next.status === 'loggingIn';
+				if (loginButton) {
+					loginButton.disabled = loggingIn;
+					loginButton.textContent = loggingIn ? 'Opening…' : 'Log in with ChatGPT';
+				}
+			}
 
 			// No HTML injection needed; content is set via textContent.
 
@@ -488,6 +616,13 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 				input.focus();
 			}
 
+			if (loginButton) {
+				loginButton.addEventListener('click', () => {
+					setAuthState({ status: 'loggingIn', detail: 'Opening browser for Codex login…' });
+					vscode.postMessage({ type: 'requestLogin' });
+				});
+			}
+
 			if (form) {
 				form.addEventListener('submit', (event) => {
 					event.preventDefault();
@@ -513,12 +648,16 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 					case 'setBusy':
 						setBusy(message.busy);
 						break;
+					case 'authState':
+						setAuthState({ status: message.status, detail: message.detail });
+						break;
 					default:
 						break;
 				}
 			});
 
 			setBusy(false);
+			setAuthState({ status: 'checking', detail: 'Checking Codex login status…' });
 			render();
 		})();
 	</script>
