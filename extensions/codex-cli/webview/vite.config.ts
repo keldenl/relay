@@ -5,6 +5,7 @@
 
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
 
 const rootDir = __dirname;
@@ -13,7 +14,7 @@ export default defineConfig(({ command }) => {
 	const isDev = command === 'serve';
 
 	return {
-		plugins: [react()],
+		plugins: [react(), tailwindcss()],
 		root: rootDir,
 		base: './',
 		resolve: {

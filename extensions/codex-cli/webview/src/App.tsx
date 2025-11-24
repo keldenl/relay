@@ -40,7 +40,7 @@ export default function App(): JSX.Element {
 	const onLogin = () => handlers.login();
 
 	return (
-		<div className="app-shell" style={{ width: '100%' }}>
+		<div className="flex h-full w-full min-h-0 flex-col bg-editor text-editor">
 			<LoginShell
 				visible={!showAgent}
 				auth={auth}
