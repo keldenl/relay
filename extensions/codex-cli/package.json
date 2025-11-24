@@ -46,7 +46,11 @@
   },
   "scripts": {
     "compile": "gulp compile-extension:codex-cli",
-    "watch": "gulp watch-extension:codex-cli"
+    "watch": "gulp watch-extension:codex-cli",
+    "dev:webview": "cd webview && npm run dev",
+    "build:webview": "cd webview && npm run build",
+    "build:ext": "gulp compile-extension:codex-cli",
+    "build": "npm run build:webview && npm run build:ext"
   },
   "files": [
     "out/**",

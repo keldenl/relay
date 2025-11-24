@@ -8,6 +8,9 @@ node_modules/
 extensions/**/dist/
 /out*/
 /extensions/**/out/
+extensions/codex-cli/webview/node_modules/
+extensions/codex-cli/media/webview-dist/
+extensions/codex-cli/webview/.vite/
 build/node_modules
 coverage/
 test_data/
