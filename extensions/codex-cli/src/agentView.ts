@@ -495,6 +495,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			display: flex;
 			flex-direction: column;
 			background: var(--vscode-editor-background);
+			gap: 8px;
 		}
 
 		.user {
@@ -537,11 +538,22 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			flex-direction: column;
 			gap: 4px;
 			padding: 10px 12px;
-			transition: all 0.2s ease-in-out;
+			opacity: 1;
+			transform: translateY(0);
+			transition: opacity 0.18s ease, transform 0.18s ease;
 			border: 1px solid var(--vscode-input-border);
 			background: var(--vscode-input-background);
 			color: var(--vscode-input-foreground);
 			border-radius: 4px;
+		}
+
+		.message.is-entering {
+			opacity: 0;
+			transform: translateY(6px);
+		}
+
+		.message > * {
+			transition: all 0.2s ease-in-out;
 		}
 
 		.message.assistant,
@@ -551,10 +563,6 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			border-radius: 0;
 			background: transparent;
 			box-shadow: none;
-		}
-
-		.message.assistant {
-			margin-top: 14px;
 		}
 
 		.message.command {
@@ -604,9 +612,8 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			white-space: pre-wrap;
 		}
 
-		.messages > .message:not(:last-of-type):not(.user) {
-			transform: scale(0.8);
-			margin-left: -10%;
+		.messages > .message:not(:last-of-type):not(.user) > * {
+			font-size: 9px;
 			opacity: 0.5;
 		}
 
@@ -702,6 +709,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			const messages = [];
 			let busy = false;
 			let currentReasoning = '';
+			let renderedCount = 0;
 
 			function setAuthState(next) {
 				const isLoggedIn = next.status === 'loggedIn';
@@ -796,17 +804,18 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 				reasoningText.textContent = shouldShow ? displayText : '';
 			}
 
-			function render() {
+			function renderNewMessages() {
 				if (!messagesEl) { return; }
-				messagesEl.innerHTML = '';
-				for (const msg of messages) {
-					if (msg.role === 'system') {
-						continue; // hide system messages from view
-					}
-					maybeAutoOpen(msg);
+				// Only append newly added messages so existing nodes keep their state and transitions can fire.
+			for (const msg of messages.slice(renderedCount)) {
+				if (msg.role === 'system') {
+					renderedCount += 1;
+					continue; // hide system messages from view
+				}
+				maybeAutoOpen(msg);
 
-					const wrapper = document.createElement('div');
-					wrapper.className = ['message', msg.role].filter(Boolean).join(' ');
+				const wrapper = document.createElement('div');
+				wrapper.className = ['message', msg.role, 'is-entering'].filter(Boolean).join(' ');
 
 					if (msg.role === 'command') {
 						const hasRead = Array.isArray(msg.parsed) && msg.parsed.some((p) => p?.kind === 'read');
@@ -828,8 +837,14 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 						wrapper.appendChild(body);
 					}
 
-					messagesEl.appendChild(wrapper);
-				}
+				messagesEl.appendChild(wrapper);
+				renderedCount += 1;
+
+				// Kick off fade/slide-in after layout so transition plays.
+				requestAnimationFrame(() => {
+					wrapper.classList.remove('is-entering');
+				});
+			}
 
 				requestAnimationFrame(() => {
 					messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -888,12 +903,15 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 								targets: message.targets || [],
 								parsed: message.parsed || [],
 							});
-							render();
+							renderNewMessages();
 							break;
 					case 'clearMessages':
 						messages.length = 0;
+						renderedCount = 0;
+						if (messagesEl) {
+							messagesEl.innerHTML = '';
+						}
 						setReasoning('');
-						render();
 						break;
 					case 'setBusy':
 						setBusy(message.busy);
@@ -911,7 +929,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
 			setBusy(false);
 			setAuthState({ status: 'checking', detail: 'Checking Codex login status…' });
-			render();
+			renderNewMessages();
 		})();
 	</script>
 </body>
