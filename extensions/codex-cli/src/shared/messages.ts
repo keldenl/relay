@@ -17,6 +17,15 @@ export interface ParsedCommandPart {
 	query?: string;
 }
 
+export interface FileChangePreview {
+	path: string;
+	absPath?: string;
+	kind?: string;
+	diff?: string;
+	/** First line number (1-based) of the changed block, if known. */
+	line?: number;
+}
+
 export interface AgentMessage {
 	role?: AgentMessageRole;
 	text?: string;
@@ -25,6 +34,7 @@ export interface AgentMessage {
 	friendlySummary?: string;
 	targets?: Array<{ label: string; path: string; isDir?: boolean }>;
 	parsed?: ParsedCommandPart[];
+	fileChanges?: FileChangePreview[];
 }
 
 export type HostToWebviewMessage =
@@ -38,7 +48,7 @@ export type WebviewToHostMessage =
 	| { type: 'submitPrompt'; prompt: string }
 	| { type: 'requestLogin' }
 	| { type: 'requestStatus' }
-	| { type: 'openPath'; path: string; isDir?: boolean };
+	| { type: 'openPath'; path: string; isDir?: boolean; selection?: { start: number; end?: number } };
 
 export function isWebviewToHostMessage(value: unknown): value is WebviewToHostMessage {
 	if (!value || typeof value !== 'object') {

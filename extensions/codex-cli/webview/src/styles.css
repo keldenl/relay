@@ -84,4 +84,35 @@
 		font-size: 9px;
 		opacity: 0.5;
 	}
+
+	.diff-block {
+		font-family: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+		background: color-mix(in srgb, var(--vscode-editor-background) 92%, var(--vscode-editor-foreground) 8%);
+		border: 1px solid var(--vscode-input-border, transparent);
+		border-radius: 6px;
+		overflow: auto;
+		max-height: 260px;
+		padding: 8px 10px;
+		line-height: 1.4;
+		white-space: pre;
+	}
+
+	.diff-line {
+		padding: 0 4px;
+	}
+
+	.diff-line.is-add {
+		background: color-mix(in srgb, var(--vscode-diffEditor-insertedTextBackground, #23863633) 80%, transparent);
+		color: var(--vscode-gitDecoration-addedResourceForeground, var(--vscode-foreground));
+	}
+
+	.diff-line.is-del {
+		background: color-mix(in srgb, var(--vscode-diffEditor-removedTextBackground, #c93c3733) 80%, transparent);
+		color: var(--vscode-gitDecoration-deletedResourceForeground, var(--vscode-foreground));
+	}
+
+	.diff-line.is-hunk {
+		color: var(--vscode-descriptionForeground);
+		font-weight: 600;
+	}
 }
