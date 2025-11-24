@@ -137,9 +137,11 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		});
 
 		try {
-			await this.codexClient.runExec(trimmed, cwd, (evt) => this.forwardCodexEvent(webview, evt));
+			await this.simulateStream(webview); // Comment this in for simluation
+			// await this.codexClient.runExec(trimmed, cwd, (evt) => this.forwardCodexEvent(webview, evt));
+
 		} catch (err) {
-			const handled = await this.handleRunError(webview, err, trimmed, cwd);
+			const handled = await this.handleRunError(webview, err);
 			if (!handled) {
 				this.postToWebview(webview, {
 					type: 'appendMessage',
@@ -205,7 +207,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
-	private async handleRunError(webview: vscode.Webview, err: unknown, prompt: string, cwd: string): Promise<boolean> {
+	private async handleRunError(webview: vscode.Webview, err: unknown): Promise<boolean> {
 		const nodeErr = err as NodeJS.ErrnoException;
 
 		if (err instanceof CodexBinaryError || nodeErr?.code === 'ENOENT') {
@@ -217,13 +219,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			this.postToWebview(webview, {
 				type: 'appendMessage',
 				role: 'assistant',
-				text: 'Codex CLI unavailable. Showing a sample stream instead.',
-			});
-			await this.simulateStream(webview, prompt, cwd);
-			this.postToWebview(webview, {
-				type: 'appendMessage',
-				role: 'assistant',
-				text: 'Simulation complete.',
+				text: 'Codex CLI unavailable.',
 			});
 			return true;
 		}
@@ -261,38 +257,105 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
-	private async simulateStream(webview: vscode.Webview, prompt: string, cwd: string): Promise<void> {
+	private async simulateStream(webview: vscode.Webview): Promise<void> {
 		const fakeEvents: CodexEvent[] = [
 			{
-				type: 'item.completed',
-				item: { type: 'reasoning', text: `**Received prompt**\n${prompt}` }
+				type: 'thread.started',
+				thread_id: '019aaa40-a59f-7c32-947e-d25600d35a09'
 			},
 			{
-				type: 'item.completed',
-				item: { type: 'reasoning', text: '**Assessing workspace...**' }
+				type: 'turn.started'
 			},
 			{
 				type: 'item.completed',
 				item: {
+					id: 'item_0',
+					type: 'reasoning',
+					text: '**Listing repository files**'
+				}
+			},
+			{
+				type: 'item.started',
+				item: {
+					id: 'item_1',
 					type: 'command_execution',
-					command: `/bin/zsh -lc "ls ${cwd}"`,
-					aggregated_output: `ls ${cwd}\nREADME.md\nsrc\npackage.json\n`
+					command: '/bin/zsh -lc ls',
+					aggregated_output: '',
+					exit_code: null,
+					status: 'in_progress'
 				}
 			},
 			{
 				type: 'item.completed',
-				item: { type: 'reasoning', text: '**Drafting response**' }
+				item: {
+					id: 'item_1',
+					type: 'command_execution',
+					command: '/bin/zsh -lc ls',
+					aggregated_output: 'dist\neslint.config.js\nindex.html\nnode_modules\npackage-lock.json\npackage.json\npublic\nREADME.md\nsrc\ntsconfig.app.json\ntsconfig.json\ntsconfig.node.json\nvite.config.ts\n',
+					exit_code: 0,
+					status: 'completed'
+				}
 			},
 			{
 				type: 'item.completed',
-				item: { type: 'agent_message', text: 'Here is the summarized answer based on the workspace.' }
+				item: {
+					id: 'item_2',
+					type: 'reasoning',
+					text: '**Reviewing README for repo summary**'
+				}
+			},
+			{
+				type: 'item.started',
+				item: {
+					id: 'item_3',
+					type: 'command_execution',
+					command: '/bin/zsh -lc "cat README.md"',
+					aggregated_output: '',
+					exit_code: null,
+					status: 'in_progress'
+				}
+			},
+			{
+				type: 'item.completed',
+				item: {
+					id: 'item_3',
+					type: 'command_execution',
+					command: '/bin/zsh -lc "cat README.md"',
+					aggregated_output: '# kelden-web\n\nInteractive terminal-style web experience for Kelden Lin. The app wraps a...\n',
+					exit_code: 0,
+					status: 'completed'
+				}
+			},
+			{
+				type: 'item.completed',
+				item: {
+					id: 'item_4',
+					type: 'reasoning',
+					text: '**Summarizing README contents**'
+				}
+			},
+			{
+				type: 'item.completed',
+				item: {
+					id: 'item_5',
+					type: 'agent_message',
+					text: '- Interactive terminal-style web app for Kelden Lin that wraps a locally hosted LLM via `@wllama/wllama`, presented as a zsh-inspired chat shell.  \n- Built with React 19, Vite 7, Tailwind CSS 4, and the experimental React Compiler; runs fully client-side with SharedArrayBuffer-enabled browsers.  \n- Key flows: `/download` grabs defaultQwen 0.6B GGUF (~639 MB), `/load` initializes it, `/chat` streams replies, `/unload` frees memory; command router lives in `src/slash/commands.ts` and `src/slash/index.ts`.  \n- Terminal UI, window controls, and sizing logic are in `src/ components/Terminal.tsx`; model metadata and defaults in `src/utils/wllama/config.ts`.  \n- Start locally with `npm install` then `npm run dev`; other scripts: `build`, `preview`, `lint`. README details usage and troubleshooting.'
+				}
+			},
+			{
+				type: 'turn.completed',
+				usage: {
+					input_tokens: 24952,
+					cached_input_tokens: 20736,
+					output_tokens: 273
+				}
 			}
 		];
 
-		let delay = 0;
+		let delay = 500;
 		await new Promise<void>((resolve) => {
 			for (const evt of fakeEvents) {
-				delay += 350;
+				delay += 1000;
 				setTimeout(() => this.forwardCodexEvent(webview, evt), delay);
 			}
 			setTimeout(() => resolve(), delay + 200);
@@ -428,21 +491,24 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		.messages {
 			flex: 1;
 			overflow-y: auto;
-			padding: 12px;
+			padding: 16px 24px;
 			display: flex;
 			flex-direction: column;
-			gap: 10px;
 			background: var(--vscode-editor-background);
 		}
 
+		.user {
+			margin-bottom: 8px;
+		}
+
 		.reasoning-bar {
-			display: flex;
+			display: inline-flex;
+			align-self: center;
 			align-items: center;
-			gap: 10px;
-			padding: 10px 12px;
-			border-top: 1px solid var(--vscode-panel-border);
-			background: var(--vscode-editorWidget-background);
-			box-shadow: 0 -1px 0 var(--vscode-widget-shadow, transparent);
+			gap: 8px;
+			padding: 6px 12px;
+			background: var(--vscode-button-secondaryBackground);
+			border-radius: 20px;
 		}
 
 		.reasoning-bar[hidden] {
@@ -450,18 +516,18 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		}
 
 		.reasoning-spinner {
-			width: 14px;
-			height: 14px;
+			width: 8px;
+			height: 8px;
 			border-radius: 50%;
-			border: 2px solid var(--vscode-foreground);
-			border-color: var(--vscode-foreground) transparent var(--vscode-foreground) transparent;
+			border: 2px solid var(--vscode-button-secondaryForeground);
+			border-color: var(--vscode-button-secondaryForeground) transparent var(--vscode-button-secondaryForeground) transparent;
 			animation: spin 1s linear infinite;
 			flex-shrink: 0;
 		}
 
 		.reasoning-text {
 			font-size: 12px;
-			color: var(--vscode-foreground);
+			color: var(--vscode-button-secondaryForeground);
 			font-weight: 600;
 			line-height: 1.4;
 		}
@@ -471,42 +537,51 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			flex-direction: column;
 			gap: 4px;
 			padding: 10px 12px;
-			border-radius: 10px;
-			border: 1px solid var(--vscode-textBlockQuote-border);
-			background: var(--vscode-editorHoverWidget-background);
-			box-shadow: 0 1px 0 var(--vscode-widget-shadow, transparent);
+			transition: all 0.2s ease-in-out;
+			border: 1px solid var(--vscode-input-border);
+			background: var(--vscode-input-background);
+			color: var(--vscode-input-foreground);
+			border-radius: 4px;
+		}
+
+		.message.assistant,
+		.message.command {
+			padding: 0;
+			border: none;
+			border-radius: 0;
+			background: transparent;
+			box-shadow: none;
 		}
 
 		.message.assistant {
-			border-color: var(--vscode-inputOption-activeBorder);
-			background: var(--vscode-editorWidget-background);
+			margin-top: 14px;
 		}
 
 		.message.command {
 			font-family: var(--vscode-editor-font-family, SFMono-Regular, Consolas, 'Liberation Mono', monospace);
-			background: var(--vscode-input-background);
-			border-style: dashed;
 		}
 
 		.message.command .command-title {
-			font-size: 12px;
-			color: var(--vscode-descriptionForeground);
+			font-size: 13px;
+			color: var(--vscode-foreground);
+			margin-bottom: 4px;
 		}
 
 		.message.command pre {
-			margin: 4px 0 0;
-			max-height: 5.2em;
+			margin: 0;
+			max-height: calc(1.4em * 4);
 			overflow: auto;
-			padding: 6px 8px;
+			padding: 8px 10px;
 			background: var(--vscode-editor-background);
 			border-radius: 6px;
 			border: 1px solid var(--vscode-textBlockQuote-border);
 			white-space: pre-wrap;
-			line-height: 1.2;
+			line-height: 1.4;
 		}
 
 		a {
 			color: var(--vscode-textLink-foreground);
+			text-decoration: none;
 		}
 
 		.message.system {
@@ -520,12 +595,19 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			color: var(--vscode-descriptionForeground);
 			text-transform: uppercase;
 			letter-spacing: 0.3px;
+			display: none;
 		}
 
 		.message .body {
 			font-size: 13px;
 			line-height: 1.5;
 			white-space: pre-wrap;
+		}
+
+		.messages > .message:not(:last-of-type):not(.user) {
+			transform: scale(0.8);
+			margin-left: -10%;
+			opacity: 0.5;
 		}
 
 		.message .body pre {
@@ -535,9 +617,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		}
 
 		.input-row {
-			border-top: 1px solid var(--vscode-panel-border);
-			background: var(--vscode-sideBar-background);
-			padding: 10px 12px;
+			padding: 10px 16px;
 		}
 
 		.input-row form {
@@ -549,7 +629,8 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		.input-row input[type="text"] {
 			flex: 1;
 			border-radius: 6px;
-			padding: 8px 10px;
+			padding: 8px 16px;
+			border-radius: 20px;
 			border: 1px solid var(--vscode-input-border);
 			background: var(--vscode-input-background);
 			color: var(--vscode-input-foreground);
@@ -590,10 +671,6 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		</div>
 	</div>
 	<div class="agent-shell" data-agent-shell>
-		<header class="agent-header">
-			<div class="agent-title">Agent</div>
-			<div class="agent-status" data-status>Ready</div>
-		</header>
 		<section class="messages" aria-label="Agent messages" data-messages></section>
 		<div class="reasoning-bar" data-reasoning hidden aria-hidden="true">
 			<div class="reasoning-spinner" aria-hidden="true"></div>
@@ -601,8 +678,8 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		</div>
 		<div class="input-row">
 			<form aria-label="Send a prompt" data-form>
-				<input type="text" name="prompt" placeholder="Ask the Agent..." aria-label="Agent prompt" data-input />
-				<button type="submit" data-send>Send</button>
+				<input type="text" name="prompt" placeholder="Ask anything..." aria-label="Agent prompt" data-input />
+				<button type="submit" data-send><i data-lucide="arrow-up"></i> Send</button>
 			</form>
 		</div>
 	</div>
@@ -619,20 +696,12 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			const loginButton = document.querySelector('[data-login-button]');
 			const reasoningBar = document.querySelector('[data-reasoning]');
 			const reasoningText = document.querySelector('[data-reasoning-text]');
+			const autoOpened = new Set();
 
 			/** @type {Array<{ role: string, text: string, command?: string, friendlyTitle?: string, friendlySummary?: string, targets?: Array<{label: string, path: string, isDir?: boolean}>, parsed?: any[] }>} */
 			const messages = [];
 			let busy = false;
-			let authState = 'checking';
 			let currentReasoning = '';
-
-			const roleLabel = (role) => {
-				if (role === 'assistant') return 'Assistant';
-				if (role === 'command') return 'Command';
-				if (role === 'system') return 'System';
-				if (role === 'user') return 'You';
-				return 'Agent';
-			};
 
 			function setAuthState(next) {
 				const isLoggedIn = next.status === 'loggedIn';
@@ -701,8 +770,20 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 				return a;
 			}
 
+			function maybeAutoOpen(msg) {
+				if (msg.role !== 'command') return;
+				if (!Array.isArray(msg.parsed)) return;
+				for (const p of msg.parsed) {
+					if (p?.kind !== 'read') continue;
+					const target = p.absPath || p.path;
+					if (!target || autoOpened.has(target)) continue;
+					autoOpened.add(target);
+					vscode.postMessage({ type: 'openPath', path: target, isDir: false });
+				}
+			}
+
 			function setReasoning(text) {
-				currentReasoning = (text ?? '').trim();
+				currentReasoning = (text ?? '').trim().replaceAll("**", "");
 				if (!reasoningBar || !reasoningText) {
 					return;
 				}
@@ -722,32 +803,28 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 					if (msg.role === 'system') {
 						continue; // hide system messages from view
 					}
+					maybeAutoOpen(msg);
+
 					const wrapper = document.createElement('div');
 					wrapper.className = ['message', msg.role].filter(Boolean).join(' ');
 
-					const meta = document.createElement('div');
-					meta.className = 'meta';
-					meta.textContent = msg.friendlyTitle || roleLabel(msg.role);
-
-					let body;
-
 					if (msg.role === 'command') {
+						const hasRead = Array.isArray(msg.parsed) && msg.parsed.some((p) => p?.kind === 'read');
 						const title = document.createElement('div');
 						title.className = 'command-title';
 						title.appendChild(buildSummary(msg));
 
-						body = document.createElement('pre');
-						body.className = 'body';
-						body.textContent = msg.text ?? '';
-
-						wrapper.appendChild(meta);
 						wrapper.appendChild(title);
-						wrapper.appendChild(body);
+						if (!hasRead) {
+							const body = document.createElement('pre');
+							body.className = 'body';
+							body.textContent = msg.text ?? '';
+							wrapper.appendChild(body);
+						}
 					} else {
-						body = document.createElement('div');
+						const body = document.createElement('div');
 						body.className = 'body';
 						body.textContent = renderPlain(msg.text ?? '');
-						wrapper.appendChild(meta);
 						wrapper.appendChild(body);
 					}
 
