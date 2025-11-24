@@ -6,6 +6,7 @@
 import React from 'react';
 import type { AgentMessage } from '@shared/messages';
 import MessageList from './MessageList';
+import { cn } from '../utils/cn';
 
 interface Props {
 	visible: boolean;
@@ -33,23 +34,28 @@ export default function AgentShell({
 	if (!visible) return <></>;
 
 	return (
-		<div className="agent-shell">
-			<section className="messages" aria-label="Agent messages" ref={listRef}>
+		<div className="flex h-full min-h-0 w-full flex-1 flex-col bg-editor">
+			<section
+				className="messages flex flex-1 min-h-0 flex-col gap-2 overflow-y-auto bg-editor px-6 py-4"
+				aria-label="Agent messages"
+				ref={listRef}
+			>
 				<MessageList messages={messages} />
 			</section>
 
-			<div
-				className="reasoning-bar"
-				hidden={!showReasoning}
-				aria-hidden={!showReasoning}
-				aria-live="polite"
-			>
-				<div className="reasoning-spinner" aria-hidden="true" />
-				<div className="reasoning-text">{reasoning || 'Thinking…'}</div>
+			<div className={cn(
+				'mx-auto mb-3 inline-flex items-center gap-2 rounded-full border border-button bg-button-secondary px-3 py-1.5 text-xs font-semibold text-button-secondary shadow-sm',
+				!showReasoning && 'hidden'
+			)} aria-hidden={!showReasoning} aria-live="polite">
+				<div
+					className="h-2 w-2 flex-shrink-0 animate-spin rounded-full border-2 border-button-secondary border-t-transparent"
+					aria-hidden="true"
+				/>
+				<div>{reasoning || 'Thinking…'}</div>
 			</div>
 
-			<div className="input-row">
-				<form aria-label="Send a prompt" onSubmit={onSubmit}>
+			<div className="bg-editor px-4 py-2">
+				<form className="flex items-center gap-2" aria-label="Send a prompt" onSubmit={onSubmit}>
 					<input
 						type="text"
 						name="prompt"
@@ -58,8 +64,13 @@ export default function AgentShell({
 						value={input}
 						onChange={(e) => setInput(e.target.value)}
 						disabled={busy}
+						className="text-placeholder focus-visible:ring-[var(--vscode-focusBorder)] focus-visible:ring-2 focus-visible:ring-offset-0 focus-visible:outline-none flex-1 rounded-full border border-input bg-input px-4 py-2 text-sm text-input disabled:opacity-70"
 					/>
-					<button type="submit" disabled={busy || !input.trim()}>
+					<button
+						type="submit"
+						disabled={busy || !input.trim()}
+						className="min-w-[72px] rounded-md border border-button bg-button-secondary px-3 py-1.5 text-xs font-semibold text-button-secondary shadow-sm transition-opacity disabled:cursor-default disabled:opacity-60"
+					>
 						Send
 					</button>
 				</form>
