@@ -5,27 +5,10 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import { CodexBinaryError, CodexClient, CodexEvent } from './codexClient';
 import { summarizeCommand } from './commandSummary';
-
-type AgentMessageRole = 'assistant' | 'command' | 'system' | 'user';
-type AuthStatus = 'checking' | 'loggedIn' | 'loggedOut' | 'loggingIn' | 'error';
-
-type WebviewMessage =
-	| {
-		type: 'appendMessage';
-		role?: AgentMessageRole;
-		text?: string;
-		command?: string;
-		friendlyTitle?: string;
-		friendlySummary?: string;
-		targets?: Array<{ label: string; path: string; isDir?: boolean }>;
-		parsed?: ReturnType<typeof summarizeCommand>['parsed'];
-	}
-	| { type: 'clearMessages' }
-	| { type: 'setBusy'; busy?: boolean }
-	| { type: 'reasoningUpdate'; text?: string }
-	| { type: 'authState'; status: AuthStatus; detail?: string };
+import { isWebviewToHostMessage, type HostToWebviewMessage, type WebviewToHostMessage, type AuthStatus } from './shared/messages';
 
 export class AgentViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewId = 'codexAgentView';
@@ -46,27 +29,34 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			enableScripts: true,
 			localResourceRoots: [
 				vscode.Uri.joinPath(this.context.extensionUri, 'media'),
+				vscode.Uri.joinPath(this.context.extensionUri, 'media', 'webview-dist'),
 			],
 		};
 
 		webview.html = this.getHtmlForWebview(webview);
 		void this.refreshAuthState(webviewView);
 
-		webview.onDidReceiveMessage((message) => {
-			if (message?.type === 'submitPrompt') {
+		webview.onDidReceiveMessage((raw) => {
+			if (!isWebviewToHostMessage(raw)) {
+				return;
+			}
+
+			const message = raw as WebviewToHostMessage;
+
+			if (message.type === 'submitPrompt') {
 				const prompt = typeof message.prompt === 'string' ? message.prompt : '';
 				void this.handlePrompt(webviewView, prompt);
 			}
 
-			if (message?.type === 'requestLogin') {
+			if (message.type === 'requestLogin') {
 				void this.handleLogin(webviewView);
 			}
 
-			if (message?.type === 'requestStatus') {
+			if (message.type === 'requestStatus') {
 				void this.refreshAuthState(webviewView);
 			}
 
-			if (message?.type === 'openPath' && typeof message.path === 'string') {
+			if (message.type === 'openPath') {
 				const target = vscode.Uri.file(message.path);
 				if (message.isDir) {
 					void vscode.window
@@ -366,12 +356,77 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		this.postToWebview(webview, { type: 'authState', status, detail });
 	}
 
-	private postToWebview(webview: vscode.Webview, message: WebviewMessage): void {
+	private postToWebview(webview: vscode.Webview, message: HostToWebviewMessage): void {
 		webview.postMessage(message).then(undefined, console.error);
 	}
 
 	private getHtmlForWebview(webview: vscode.Webview): string {
+		if (this.isDevServerEnabled()) {
+			return this.getDevHtml(webview);
+		}
+		return this.getProdHtml(webview);
+	}
+
+	private isDevServerEnabled(): boolean {
+		return process.env.VSCODE_DEV === 'true' || process.env.VSCODE_DEBUG_MODE === 'true';
+	}
+
+	private getDevServerUrl(): string {
+		return process.env.VSCODE_WEBVIEW_DEV_SERVER ?? 'http://127.0.0.1:5173';
+	}
+
+	private getDevHtml(webview: vscode.Webview): string {
 		const nonce = getNonce();
+		const devServer = this.getDevServerUrl();
+		let devHost = '127.0.0.1:5173';
+		try {
+			devHost = new URL(devServer).host;
+		} catch {
+			// ignore malformed URL; default stays
+		}
+
+		const csp = [
+			`default-src 'none';`,
+			`img-src ${webview.cspSource} https: data:;`,
+			`style-src 'unsafe-inline' ${webview.cspSource} ${devServer};`,
+			`font-src ${webview.cspSource} https: data:;`,
+			`script-src 'nonce-${nonce}' ${devServer};`,
+			`connect-src ${devServer} ws://${devHost};`,
+		].join(' ');
+
+		return /* html */ `<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<meta http-equiv="Content-Security-Policy" content="${csp}">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Codex Agent</title>
+</head>
+<body>
+	<div id="root"></div>
+	<script type="module" nonce="${nonce}" src="${devServer}/@vite/client"></script>
+	<script type="module" nonce="${nonce}" src="${devServer}/src/main.tsx"></script>
+</body>
+</html>`;
+	}
+
+	private getProdHtml(webview: vscode.Webview): string {
+		const nonce = getNonce();
+		const manifest = this.readManifest();
+		const entry = manifest['src/main.tsx'] ?? Object.values(manifest).find((v) => v?.isEntry) ?? Object.values(manifest)[0];
+
+		if (!entry || !entry.file) {
+			return this.renderMissingBundleHtml(webview, nonce);
+		}
+
+		const scriptUri = webview.asWebviewUri(
+			vscode.Uri.joinPath(this.context.extensionUri, 'media', 'webview-dist', entry.file)
+		);
+		const styleUris = (entry.css ?? []).map((cssFile) =>
+			webview.asWebviewUri(
+				vscode.Uri.joinPath(this.context.extensionUri, 'media', 'webview-dist', cssFile)
+			)
+		);
 
 		const csp = [
 			`default-src 'none';`,
@@ -381,559 +436,65 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			`script-src 'nonce-${nonce}';`,
 		].join(' ');
 
+		const styleLinks = styleUris.map((uri) => `<link rel="stylesheet" href="${uri}">`).join('\n\t');
+
 		return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
 	<meta charset="UTF-8" />
 	<meta http-equiv="Content-Security-Policy" content="${csp}">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Codex Agent</title>
+	${styleLinks}
+</head>
+<body>
+	<div id="root"></div>
+	<script type="module" nonce="${nonce}" src="${scriptUri}"></script>
+</body>
+</html>`;
+	}
+
+	private renderMissingBundleHtml(webview: vscode.Webview, nonce: string): string {
+		const csp = [
+			`default-src 'none';`,
+			`style-src 'nonce-${nonce}' ${webview.cspSource};`,
+		].join(' ');
+
+		return /* html */ `<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<meta http-equiv="Content-Security-Policy" content="${csp}">
 	<style nonce="${nonce}">
-		:root {
-			color-scheme: light dark;
-		}
-
-		body {
-			margin: 0;
-			padding: 0;
-			font-family: var(--vscode-font-family);
-			color: var(--vscode-editor-foreground);
-			background: var(--vscode-editor-background);
-			height: 100vh;
-			display: flex;
-		}
-
-		.agent-shell {
-			flex: 1;
-			display: flex;
-			flex-direction: column;
-			height: 100%;
-			background: var(--vscode-editor-background);
-		}
-
-		.login-shell {
-			flex: 1;
-			display: none;
-			padding: 24px;
-			background: var(--vscode-editor-background);
-			align-items: center;
-			justify-content: center;
-		}
-
-		.login-content {
-			display: flex;
-			flex-direction: column;
-			gap: 12px;
-			text-align: center;
-		}
-
-		.login-title {
-			font-size: 16px;
-			font-weight: 600;
-			letter-spacing: 0.2px;
-		}
-
-		.login-copy {
-			margin: 0;
-			color: var(--vscode-descriptionForeground);
-			line-height: 1.4;
-			font-size: 13px;
-		}
-
-		.login-button {
-			align-self: center;
-			border-radius: 6px;
-			height: 34px;
-			padding: 0 16px;
-			border: 1px solid var(--vscode-button-border, transparent);
-			background: var(--vscode-button-background);
-			color: var(--vscode-button-foreground);
-			font-size: 12px;
-			font-weight: 600;
-		}
-
-		.login-button:disabled {
-			opacity: 0.75;
-			cursor: default;
-		}
-
-		.agent-header {
-			display: flex;
-			align-items: center;
-			justify-content: space-between;
-			padding: 10px 14px;
-			border-bottom: 1px solid var(--vscode-panel-border);
-			background: var(--vscode-sideBar-background);
-			position: sticky;
-			top: 0;
-			z-index: 1;
-		}
-
-		.agent-title {
-			display: flex;
-			gap: 8px;
-			align-items: center;
-			font-size: 13px;
-			font-weight: 600;
-			letter-spacing: 0.2px;
-		}
-
-		.agent-status {
-			font-size: 11px;
-			color: var(--vscode-descriptionForeground);
-			padding: 2px 8px;
-			border-radius: 100px;
-			border: 1px solid var(--vscode-input-border);
-			background: var(--vscode-sideBarSectionHeader-background, transparent);
-			min-width: 72px;
-			text-align: center;
-		}
-
-		.messages {
-			flex: 1;
-			overflow-y: auto;
-			padding: 16px 24px;
-			display: flex;
-			flex-direction: column;
-			background: var(--vscode-editor-background);
-			gap: 8px;
-		}
-
-		.user {
-			margin-bottom: 8px;
-		}
-
-		.reasoning-bar {
-			display: inline-flex;
-			align-self: center;
-			align-items: center;
-			gap: 8px;
-			padding: 6px 12px;
-			background: var(--vscode-button-secondaryBackground);
-			border-radius: 20px;
-		}
-
-		.reasoning-bar[hidden] {
-			display: none;
-		}
-
-		.reasoning-spinner {
-			width: 8px;
-			height: 8px;
-			border-radius: 50%;
-			border: 2px solid var(--vscode-button-secondaryForeground);
-			border-color: var(--vscode-button-secondaryForeground) transparent var(--vscode-button-secondaryForeground) transparent;
-			animation: spin 1s linear infinite;
-			flex-shrink: 0;
-		}
-
-		.reasoning-text {
-			font-size: 12px;
-			color: var(--vscode-button-secondaryForeground);
-			font-weight: 600;
-			line-height: 1.4;
-		}
-
-		.message {
-			display: flex;
-			flex-direction: column;
-			gap: 4px;
-			padding: 10px 12px;
-			opacity: 1;
-			transform: translateY(0);
-			transition: opacity 0.18s ease, transform 0.18s ease;
-			border: 1px solid var(--vscode-input-border);
-			background: var(--vscode-input-background);
-			color: var(--vscode-input-foreground);
-			border-radius: 4px;
-		}
-
-		.message.is-entering {
-			opacity: 0;
-			transform: translateY(6px);
-		}
-
-		.message > * {
-			transition: all 0.2s ease-in-out;
-		}
-
-		.message.assistant,
-		.message.command {
-			padding: 0;
-			border: none;
-			border-radius: 0;
-			background: transparent;
-			box-shadow: none;
-		}
-
-		.message.command {
-			font-family: var(--vscode-editor-font-family, SFMono-Regular, Consolas, 'Liberation Mono', monospace);
-		}
-
-		.message.command .command-title {
-			font-size: 13px;
-			color: var(--vscode-foreground);
-			margin-bottom: 4px;
-		}
-
-		.message.command pre {
-			margin: 0;
-			max-height: calc(1.4em * 4);
-			overflow: auto;
-			padding: 8px 10px;
-			background: var(--vscode-editor-background);
-			border-radius: 6px;
-			border: 1px solid var(--vscode-textBlockQuote-border);
-			white-space: pre-wrap;
-			line-height: 1.4;
-		}
-
-		a {
-			color: var(--vscode-textLink-foreground);
-			text-decoration: none;
-		}
-
-		.message.system {
-			border: 1px dashed var(--vscode-textBlockQuote-border);
-			color: var(--vscode-descriptionForeground);
-			background: var(--vscode-sideBar-background);
-		}
-
-		.message .meta {
-			font-size: 11px;
-			color: var(--vscode-descriptionForeground);
-			text-transform: uppercase;
-			letter-spacing: 0.3px;
-			display: none;
-		}
-
-		.message .body {
-			font-size: 13px;
-			line-height: 1.5;
-			white-space: pre-wrap;
-		}
-
-		.messages > .message:not(:last-of-type):not(.user) > * {
-			font-size: 9px;
-			opacity: 0.5;
-		}
-
-		.message .body pre {
-			margin: 0;
-			font-family: inherit;
-			white-space: pre-wrap;
-		}
-
-		.input-row {
-			padding: 10px 16px;
-		}
-
-		.input-row form {
-			display: flex;
-			gap: 8px;
-			align-items: center;
-		}
-
-		.input-row input[type="text"] {
-			flex: 1;
-			border-radius: 6px;
-			padding: 8px 16px;
-			border-radius: 20px;
-			border: 1px solid var(--vscode-input-border);
-			background: var(--vscode-input-background);
-			color: var(--vscode-input-foreground);
-			font-size: 13px;
-		}
-
-		.input-row input::placeholder {
-			color: var(--vscode-input-placeholderForeground);
-		}
-
-		.input-row button {
-			min-width: 68px;
-			border-radius: 6px;
-			border: 1px solid var(--vscode-button-border, transparent);
-			background: var(--vscode-button-secondaryBackground);
-			color: var(--vscode-button-secondaryForeground);
-			height: 32px;
-			padding: 0 12px;
-			font-size: 12px;
-		}
-
-		.input-row button:disabled {
-			opacity: 0.6;
-			cursor: default;
-		}
-
-		@keyframes spin {
-			0% { transform: rotate(0deg); }
-			100% { transform: rotate(360deg); }
-		}
+		body { font-family: var(--vscode-font-family); color: var(--vscode-errorForeground); padding: 16px; }
 	</style>
 </head>
 <body>
-	<div class="login-shell" data-login-shell>
-		<div class="login-content">
-			<div class="login-title">Sign in to Codex</div>
-			<button type="button" class="login-button" data-login-button>Log in with ChatGPT</button>
-		</div>
-	</div>
-	<div class="agent-shell" data-agent-shell>
-		<section class="messages" aria-label="Agent messages" data-messages></section>
-		<div class="reasoning-bar" data-reasoning hidden aria-hidden="true">
-			<div class="reasoning-spinner" aria-hidden="true"></div>
-			<div class="reasoning-text" data-reasoning-text>Thinking…</div>
-		</div>
-		<div class="input-row">
-			<form aria-label="Send a prompt" data-form>
-				<input type="text" name="prompt" placeholder="Ask anything..." aria-label="Agent prompt" data-input />
-				<button type="submit" data-send><i data-lucide="arrow-up"></i> Send</button>
-			</form>
-		</div>
-	</div>
-	<script nonce="${nonce}">
-		(function () {
-			const vscode = acquireVsCodeApi();
-			const messagesEl = document.querySelector('[data-messages]');
-			const form = document.querySelector('[data-form]');
-			const input = document.querySelector('[data-input]');
-			const sendButton = document.querySelector('[data-send]');
-			const statusEl = document.querySelector('[data-status]');
-			const agentShell = document.querySelector('[data-agent-shell]');
-			const loginShell = document.querySelector('[data-login-shell]');
-			const loginButton = document.querySelector('[data-login-button]');
-			const reasoningBar = document.querySelector('[data-reasoning]');
-			const reasoningText = document.querySelector('[data-reasoning-text]');
-			const autoOpened = new Set();
-
-			/** @type {Array<{ role: string, text: string, command?: string, friendlyTitle?: string, friendlySummary?: string, targets?: Array<{label: string, path: string, isDir?: boolean}>, parsed?: any[] }>} */
-			const messages = [];
-			let busy = false;
-			let currentReasoning = '';
-			let renderedCount = 0;
-
-			function setAuthState(next) {
-				const isLoggedIn = next.status === 'loggedIn';
-				if (agentShell) agentShell.style.display = isLoggedIn ? 'flex' : 'none';
-				if (loginShell) loginShell.style.display = isLoggedIn ? 'none' : 'flex';
-
-				const loggingIn = next.status === 'loggingIn';
-				if (loginButton) {
-					loginButton.disabled = loggingIn;
-					loginButton.textContent = loggingIn ? 'Opening…' : 'Log in with ChatGPT';
-				}
-			}
-
-			// No HTML injection needed; content is set via textContent.
-
-			// We intentionally keep rendering simple (plain text + preserved newlines) to avoid regex pitfalls.
-			function renderPlain(text) {
-				return text ?? '';
-			}
-
-			function buildSummary(msg) {
-				// If we have parsed commands, render inline with links.
-				if (Array.isArray(msg.parsed) && msg.parsed.length > 0) {
-					const span = document.createElement('span');
-						msg.parsed.forEach((p, idx) => {
-							if (idx > 0) span.appendChild(document.createTextNode(' | '));
-						if (p.kind === 'read') {
-							span.appendChild(document.createTextNode('Read '));
-								span.appendChild(makeLink(p.label || p.name || p.path || p.raw, p.absPath || p.path, false));
-							} else if (p.kind === 'list') {
-								span.appendChild(document.createTextNode('Listed '));
-								span.appendChild(makeLink(p.label || p.name || p.path || '.', p.absPath || p.path || '.', true));
-							} else if (p.kind === 'search') {
-								span.appendChild(document.createTextNode('Searched '));
-								if (p.query) {
-									span.appendChild(document.createTextNode('"' + p.query + '"'));
-									if (p.path) {
-										span.appendChild(document.createTextNode(' in '));
-										span.appendChild(makeLink(p.label || p.name || p.path, p.absPath || p.path, true));
-									}
-								} else if (p.path) {
-									span.appendChild(makeLink(p.label || p.name || p.path, p.absPath || p.path, true));
-								} else {
-									span.appendChild(document.createTextNode('files'));
-								}
-							} else {
-								span.appendChild(document.createTextNode('Ran ' + p.raw));
-						}
-					});
-					return span;
-				}
-				const fallback = document.createElement('span');
-				fallback.textContent = msg.friendlySummary
-					|| (msg.command ? '> ' + msg.command : 'Command output');
-				return fallback;
-			}
-
-			function makeLink(label, path, isDir) {
-				const a = document.createElement('a');
-				a.href = '#';
-				a.textContent = label;
-				a.addEventListener('click', (e) => {
-					e.preventDefault();
-					vscode.postMessage({ type: 'openPath', path, isDir: Boolean(isDir) });
-				});
-				return a;
-			}
-
-			function maybeAutoOpen(msg) {
-				if (msg.role !== 'command') return;
-				if (!Array.isArray(msg.parsed)) return;
-				for (const p of msg.parsed) {
-					if (p?.kind !== 'read') continue;
-					const target = p.absPath || p.path;
-					if (!target || autoOpened.has(target)) continue;
-					autoOpened.add(target);
-					vscode.postMessage({ type: 'openPath', path: target, isDir: false });
-				}
-			}
-
-			function setReasoning(text) {
-				currentReasoning = (text ?? '').trim().replaceAll("**", "");
-				if (!reasoningBar || !reasoningText) {
-					return;
-				}
-
-				const shouldShow = busy || currentReasoning.length > 0;
-				const displayText = currentReasoning || 'Thinking…';
-
-				reasoningBar.hidden = !shouldShow;
-				reasoningBar.setAttribute('aria-hidden', shouldShow ? 'false' : 'true');
-				reasoningText.textContent = shouldShow ? displayText : '';
-			}
-
-			function renderNewMessages() {
-				if (!messagesEl) { return; }
-				// Only append newly added messages so existing nodes keep their state and transitions can fire.
-			for (const msg of messages.slice(renderedCount)) {
-				if (msg.role === 'system') {
-					renderedCount += 1;
-					continue; // hide system messages from view
-				}
-				maybeAutoOpen(msg);
-
-				const wrapper = document.createElement('div');
-				wrapper.className = ['message', msg.role, 'is-entering'].filter(Boolean).join(' ');
-
-					if (msg.role === 'command') {
-						const hasRead = Array.isArray(msg.parsed) && msg.parsed.some((p) => p?.kind === 'read');
-						const title = document.createElement('div');
-						title.className = 'command-title';
-						title.appendChild(buildSummary(msg));
-
-						wrapper.appendChild(title);
-						if (!hasRead) {
-							const body = document.createElement('pre');
-							body.className = 'body';
-							body.textContent = msg.text ?? '';
-							wrapper.appendChild(body);
-						}
-					} else {
-						const body = document.createElement('div');
-						body.className = 'body';
-						body.textContent = renderPlain(msg.text ?? '');
-						wrapper.appendChild(body);
-					}
-
-				messagesEl.appendChild(wrapper);
-				renderedCount += 1;
-
-				// Kick off fade/slide-in after layout so transition plays.
-				requestAnimationFrame(() => {
-					wrapper.classList.remove('is-entering');
-				});
-			}
-
-				requestAnimationFrame(() => {
-					messagesEl.scrollTop = messagesEl.scrollHeight;
-				});
-			}
-
-			function setBusy(nextBusy) {
-				busy = Boolean(nextBusy);
-				if (statusEl) {
-					statusEl.textContent = busy ? 'Running…' : 'Ready';
-				}
-				if (input) input.disabled = busy;
-				if (sendButton) sendButton.disabled = busy;
-				setReasoning(busy ? currentReasoning : '');
-			}
-
-			function sendPrompt() {
-				if (!input) return;
-				const value = input.value.trim();
-				if (!value || busy) {
-					return;
-				}
-				vscode.postMessage({ type: 'submitPrompt', prompt: value });
-				input.value = '';
-				input.focus();
-			}
-
-			if (loginButton) {
-				loginButton.addEventListener('click', () => {
-					setAuthState({ status: 'loggingIn', detail: 'Opening browser for Codex login…' });
-					vscode.postMessage({ type: 'requestLogin' });
-				});
-			}
-
-			if (form) {
-				form.addEventListener('submit', (event) => {
-					event.preventDefault();
-					sendPrompt();
-				});
-			}
-
-			window.addEventListener('message', (event) => {
-				const message = event.data;
-				if (!message || !message.type) {
-					return;
-				}
-
-				switch (message.type) {
-						case 'appendMessage':
-							messages.push({
-								role: message.role || 'assistant',
-								text: message.text ?? '',
-								command: message.command,
-								friendlyTitle: message.friendlyTitle,
-								friendlySummary: message.friendlySummary,
-								targets: message.targets || [],
-								parsed: message.parsed || [],
-							});
-							renderNewMessages();
-							break;
-					case 'clearMessages':
-						messages.length = 0;
-						renderedCount = 0;
-						if (messagesEl) {
-							messagesEl.innerHTML = '';
-						}
-						setReasoning('');
-						break;
-					case 'setBusy':
-						setBusy(message.busy);
-						break;
-					case 'reasoningUpdate':
-						setReasoning(message.text ?? '');
-						break;
-					case 'authState':
-						setAuthState({ status: message.status, detail: message.detail });
-						break;
-					default:
-						break;
-				}
-			});
-
-			setBusy(false);
-			setAuthState({ status: 'checking', detail: 'Checking Codex login status…' });
-			renderNewMessages();
-		})();
-	</script>
+	<p>Codex webview bundle is missing. Run "npm run build:webview" inside <code>extensions/codex-cli</code> and reload.</p>
 </body>
 </html>`;
+	}
+
+	private readManifest(): Record<string, ViteManifestEntry> {
+		const distRoot = path.join(this.context.extensionPath, 'media', 'webview-dist');
+		const manifestCandidates = [
+			path.join(distRoot, 'manifest.json'),
+			path.join(distRoot, '.vite', 'manifest.json'),
+		];
+
+		for (const candidate of manifestCandidates) {
+			if (fs.existsSync(candidate)) {
+				try {
+					const raw = fs.readFileSync(candidate, 'utf8');
+					return JSON.parse(raw) as Record<string, ViteManifestEntry>;
+				} catch (err) {
+					console.error('Failed to parse webview manifest', err);
+				}
+			}
+		}
+
+		console.error('No webview manifest found in', manifestCandidates.join(', '));
+		return {};
 	}
 
 	private formatFriendlyError(err: unknown): string {
@@ -961,4 +522,10 @@ function getNonce(): string {
 		text += possible.charAt(Math.floor(Math.random() * possible.length));
 	}
 	return text;
+}
+
+interface ViteManifestEntry {
+	file: string;
+	css?: string[];
+	isEntry?: boolean;
 }

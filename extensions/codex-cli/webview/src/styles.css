@@ -1,0 +1,272 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+:root {
+	color-scheme: light dark;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html, body, #root {
+	height: 100%;
+	width: 100%;
+}
+
+body {
+	margin: 0;
+	padding: 0;
+	font-family: var(--vscode-font-family);
+	color: var(--vscode-editor-foreground);
+	background: var(--vscode-editor-background);
+	display: flex;
+}
+
+.app-shell {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-height: 0;
+	width: 100%;
+	height: 100%;
+}
+
+.login-shell {
+	flex: 1;
+	display: none;
+	padding: 24px;
+	background: var(--vscode-editor-background);
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+}
+
+.login-content {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	text-align: center;
+}
+
+.login-title {
+	font-size: 16px;
+	font-weight: 600;
+	letter-spacing: 0.2px;
+}
+
+.login-copy {
+	margin: 0;
+	color: var(--vscode-descriptionForeground);
+	line-height: 1.4;
+	font-size: 13px;
+}
+
+.login-button {
+	align-self: center;
+	border-radius: 6px;
+	height: 34px;
+	padding: 0 16px;
+	border: 1px solid var(--vscode-button-border, transparent);
+	background: var(--vscode-button-background);
+	color: var(--vscode-button-foreground);
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.login-button:disabled {
+	opacity: 0.75;
+	cursor: default;
+}
+
+.agent-shell {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+	background: var(--vscode-editor-background);
+	width: 100%;
+}
+
+.messages {
+	flex: 1;
+	overflow-y: auto;
+	padding: 16px 24px;
+	display: flex;
+	flex-direction: column;
+	background: var(--vscode-editor-background);
+	gap: 8px;
+	min-height: 0;
+}
+
+.reasoning-bar {
+	display: inline-flex;
+	align-self: center;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 12px;
+	background: var(--vscode-button-secondaryBackground);
+	border-radius: 20px;
+}
+
+.reasoning-bar[hidden] {
+	display: none;
+}
+
+.reasoning-spinner {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	border: 2px solid var(--vscode-button-secondaryForeground);
+	border-color: var(--vscode-button-secondaryForeground) transparent var(--vscode-button-secondaryForeground) transparent;
+	animation: spin 1s linear infinite;
+	flex-shrink: 0;
+}
+
+.reasoning-text {
+	font-size: 12px;
+	color: var(--vscode-button-secondaryForeground);
+	font-weight: 600;
+	line-height: 1.4;
+}
+
+@keyframes spin {
+	0% { transform: rotate(0deg); }
+	100% { transform: rotate(360deg); }
+}
+
+.message {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 10px 12px;
+	opacity: 1;
+	transform: translateY(0);
+	transition: opacity 0.18s ease, transform 0.18s ease;
+	border: 1px solid var(--vscode-input-border);
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	border-radius: 4px;
+}
+
+.message.is-entering {
+	opacity: 0;
+	transform: translateY(6px);
+}
+
+.message > * {
+	transition: opacity 0.2s ease, font-size 0.2s ease, transform 0.2s ease;
+}
+
+.messages > .message:not(:last-of-type):not(.user) {
+	opacity: 0.6;
+}
+
+.message.assistant,
+.message.command {
+	padding: 0;
+	border: none;
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+.message.command {
+	font-family: var(--vscode-editor-font-family, SFMono-Regular, Consolas, 'Liberation Mono', monospace);
+}
+
+.message.command .command-title {
+	font-size: 13px;
+	color: var(--vscode-foreground);
+	margin-bottom: 4px;
+}
+
+.message.command pre {
+	margin: 0;
+	max-height: calc(1.4em * 4);
+	overflow: auto;
+	padding: 8px 10px;
+	background: var(--vscode-editor-background);
+	border-radius: 6px;
+	border: 1px solid var(--vscode-textBlockQuote-border);
+	white-space: pre-wrap;
+	line-height: 1.4;
+}
+
+.message.system {
+	border: 1px dashed var(--vscode-textBlockQuote-border);
+	color: var(--vscode-descriptionForeground);
+	background: var(--vscode-sideBar-background);
+}
+
+.message .body {
+	font-size: 13px;
+	line-height: 1.5;
+	white-space: pre-wrap;
+}
+
+.messages > .message:not(:last-of-type):not(.user) > * {
+	font-size: 9px;
+	opacity: 0.5;
+}
+
+.message .body pre {
+	margin: 0;
+	font-family: inherit;
+	white-space: pre-wrap;
+}
+
+.input-row {
+	padding: 10px 16px;
+}
+
+.input-row form {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+
+.input-row input[type="text"] {
+	flex: 1;
+	border-radius: 6px;
+	padding: 8px 16px;
+	border-radius: 20px;
+	border: 1px solid var(--vscode-input-border);
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	font-size: 13px;
+}
+
+.input-row input::placeholder {
+	color: var(--vscode-input-placeholderForeground);
+}
+
+.input-row button {
+	min-width: 68px;
+	border-radius: 6px;
+	border: 1px solid var(--vscode-button-border, transparent);
+	background: var(--vscode-button-secondaryBackground);
+	color: var(--vscode-button-secondaryForeground);
+	height: 32px;
+	padding: 0 12px;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.input-row button:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
+a {
+	color: var(--vscode-textLink-foreground);
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
