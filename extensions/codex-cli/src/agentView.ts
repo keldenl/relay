@@ -137,8 +137,8 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		});
 
 		try {
-			await this.simulateStream(webview); // Comment this in for simluation
-			// await this.codexClient.runExec(trimmed, cwd, (evt) => this.forwardCodexEvent(webview, evt));
+			// await this.simulateStream(webview); // Comment this in for simluation
+			await this.codexClient.runExec(trimmed, cwd, (evt) => this.forwardCodexEvent(webview, evt));
 
 		} catch (err) {
 			const handled = await this.handleRunError(webview, err);

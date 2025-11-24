@@ -51,6 +51,8 @@ export class CodexClient {
 				'exec',
 				'--json',
 				'--color=never',
+				'--sandbox',
+				'workspace-write', // Give workspace write access
 				'--cd',
 				cwd,
 				prompt
