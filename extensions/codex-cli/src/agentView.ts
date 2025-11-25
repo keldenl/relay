@@ -247,6 +247,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
+	// @ts-ignore kept unused intentionally for debugging stream rendering
 	private async simulateStream(webview: vscode.Webview): Promise<void> {
 		const fakeEvents: CodexEvent[] = [
 			{
