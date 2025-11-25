@@ -15,8 +15,10 @@ export function getBundledCodexPath(context: vscode.ExtensionContext): string {
 
 	if (platform === 'darwin' && arch === 'arm64') {
 		subdir = 'darwin-arm64';
+	} else if (platform === 'darwin' && arch === 'x64') {
+		subdir = 'darwin-x64';
 	}
-	// TODO: future cases (darwin-x64, linux-x64, win32, etc.)
+	// TODO: future cases (linux-x64, win32, etc.)
 
 	if (!subdir) {
 		throw new Error(`Unsupported platform for bundled Codex CLI: ${platform} ${arch}`);

@@ -28,4 +28,4 @@ product.overrides.json
 vscode-telemetry-docs/
 
 # for codex cli binary
-extensions/codex-cli/bin/*/*
+extensions/codex-cli/bin/*/codex

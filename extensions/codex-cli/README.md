@@ -6,7 +6,8 @@ Built-in scaffolding that launches a bundled Codex CLI binary and streams its JS
 
 The extension expects a Codex CLI binary to be present under the `bin` directory for your platform:
 
-- On this dev fork (darwin-arm64): `extensions/codex-cli/bin/darwin-arm64/codex`
+- Apple Silicon macOS: `extensions/codex-cli/bin/darwin-arm64/codex`
+- Intel macOS: `extensions/codex-cli/bin/darwin-x64/codex`
 - Windows would use `codex.exe` in the corresponding `bin/<platform>` folder (platform support is a TODO).
 
 The tracked file in git is a placeholder. To use the real CLI:
