@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import * as readline from 'readline';
 import * as vscode from 'vscode';
 import { getBundledCodexPath } from './paths';
+import type { ReasoningEffortOption } from './shared/messages';
 
 export class CodexBinaryError extends Error {
 	constructor(message: string, public readonly binaryPath: string) {
@@ -38,7 +39,12 @@ export class CodexClient {
 		return codexPath;
 	}
 
-	runExec(prompt: string, cwd: string, onEvent: (evt: CodexEvent) => void): Promise<void> {
+	runExec(
+		prompt: string,
+		cwd: string,
+		onEvent: (evt: CodexEvent) => void,
+		options?: { reasoningEffort?: ReasoningEffortOption }
+	): Promise<void> {
 		return new Promise((resolve, reject) => {
 			let codexPath: string;
 			try {
@@ -57,6 +63,11 @@ export class CodexClient {
 				cwd,
 				prompt
 			];
+
+			const effort = options?.reasoningEffort;
+			if (effort) {
+				args.splice(args.length - 1, 0, '--config', `model_reasoning_effort="${effort}"`);
+			}
 
 			const child = cp.spawn(codexPath, args, {
 				cwd,

@@ -4,9 +4,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 import React from 'react';
-import type { AgentMessage } from '@shared/messages';
+import type { AgentMessage, ReasoningEffortOption } from '@shared/messages';
 import MessageList from './MessageList';
 import { cn } from '../utils/cn';
+import TopBar from './TopBar';
 
 interface Props {
 	visible: boolean;
@@ -18,6 +19,8 @@ interface Props {
 	setInput: (v: string) => void;
 	onSubmit: (event?: React.FormEvent) => void;
 	listRef: React.RefObject<HTMLDivElement>;
+	reasoningEffort: ReasoningEffortOption;
+	onReasoningEffortChange: (effort: ReasoningEffortOption) => void;
 }
 
 export default function AgentShell({
@@ -30,13 +33,16 @@ export default function AgentShell({
 	setInput,
 	onSubmit,
 	listRef,
+	reasoningEffort,
+	onReasoningEffortChange,
 }: Props): JSX.Element {
 	if (!visible) return <></>;
 
 	return (
 		<div className="flex h-full min-h-0 w-full flex-1 flex-col bg-editor">
+			<TopBar effort={reasoningEffort} onChange={onReasoningEffortChange} />
 			<section
-				className="messages flex flex-1 min-h-0 flex-col gap-2 overflow-y-auto bg-editor px-6 py-4"
+				className="messages flex flex-1 min-h-0 flex-col gap-2 overflow-y-auto bg-editor px-4 pb-2"
 				aria-label="Agent messages"
 				ref={listRef}
 			>

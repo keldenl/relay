@@ -75,7 +75,7 @@ export default function MessageItem({ message }: Props): JSX.Element {
 			entering && 'is-entering',
 			role === 'assistant'
 				? 'border-0 bg-transparent p-0 shadow-none text-[color:var(--vscode-foreground)]'
-				: 'rounded-md border border-input bg-input p-3 text-[13px] leading-[1.5] text-input shadow-sm',
+				: 'rounded-md border border-input bg-input px-3 py-2 text-[13px] leading-[1.5] text-input shadow-sm',
 			role === 'system' && 'border-dashed border-block bg-side text-description'
 		)}>
 			<div className="whitespace-pre-wrap text-[13px] leading-[1.5]">{body}</div>

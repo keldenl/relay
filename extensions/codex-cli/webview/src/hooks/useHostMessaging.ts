@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { useEffect, useReducer } from 'react';
-import type { AgentMessage, AuthStatus, HostToWebviewMessage } from '@shared/messages';
+import type { AgentMessage, AuthStatus, HostToWebviewMessage, ReasoningEffortOption } from '@shared/messages';
 import vscode, { postMessage } from '../vscode';
 
 type State = {
@@ -12,6 +12,7 @@ type State = {
 	busy: boolean;
 	reasoning: string;
 	messages: AgentMessage[];
+	reasoningEffort: ReasoningEffortOption;
 };
 
 type Action =
@@ -19,13 +20,15 @@ type Action =
 	| { type: 'setBusy'; busy: boolean }
 	| { type: 'setReasoning'; text: string }
 	| { type: 'appendMessage'; message: AgentMessage }
-	| { type: 'clear' };
+	| { type: 'clear' }
+	| { type: 'setReasoningEffort'; effort: ReasoningEffortOption };
 
 const initialState: State = {
 	auth: { status: 'checking' },
 	busy: false,
 	reasoning: '',
 	messages: [],
+	reasoningEffort: 'medium',
 };
 
 function reducer(state: State, action: Action): State {
@@ -38,6 +41,8 @@ function reducer(state: State, action: Action): State {
 			return { ...state, reasoning: action.text };
 		case 'appendMessage':
 			return { ...state, messages: [...state.messages, action.message] };
+		case 'setReasoningEffort':
+			return { ...state, reasoningEffort: action.effort };
 		case 'clear':
 			return { ...state, messages: [], reasoning: '' };
 		default:
@@ -80,6 +85,9 @@ function handleHostMessage(dispatch: React.Dispatch<Action>, message: HostToWebv
 				dispatch({ type: 'setBusy', busy: false });
 			}
 			return;
+		case 'reasoningState':
+			dispatch({ type: 'setReasoningEffort', effort: message.effort });
+			return;
 		default:
 			return;
 	}
@@ -113,10 +121,14 @@ export function useHostMessaging() {
 	};
 
 	const requestStatus = () => postMessage({ type: 'requestStatus' });
+	const setReasoningEffort = (effort: ReasoningEffortOption) => {
+		dispatch({ type: 'setReasoningEffort', effort });
+		postMessage({ type: 'setReasoningEffort', effort });
+	};
 
 	return {
 		state,
-		handlers: { submitPrompt, login, requestStatus },
+		handlers: { submitPrompt, login, requestStatus, setReasoningEffort },
 		postMessage: vscode.postMessage,
 	};
 }
