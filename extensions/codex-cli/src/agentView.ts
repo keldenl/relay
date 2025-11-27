@@ -6,6 +6,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as cp from 'child_process';
 import { CodexBinaryError, CodexClient, CodexEvent } from './codexClient';
 import { summarizeCommand } from './commandSummary';
 import { isWebviewToHostMessage, type HostToWebviewMessage, type WebviewToHostMessage, type AuthStatus } from './shared/messages';
@@ -14,12 +15,31 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewId = 'codexAgentView';
 
 	private readonly codexClient: CodexClient;
+	private readonly readDecoration: vscode.TextEditorDecorationType;
+	private readonly readLabelDecoration: vscode.TextEditorDecorationType;
 	private busy = false;
 	private authStatus: AuthStatus = 'checking';
 	private lastCwd: string | undefined;
+	private lastCommandOutput: string | undefined;
+	private readHighlightsByDoc = new Map<string, vscode.Range[]>();
 
 	constructor(private readonly context: vscode.ExtensionContext) {
 		this.codexClient = new CodexClient(context);
+		this.readDecoration = vscode.window.createTextEditorDecorationType({
+			backgroundColor: new vscode.ThemeColor('editor.selectionHighlightBackground'),
+			overviewRulerColor: new vscode.ThemeColor('editor.selectionHighlightBackground'),
+			overviewRulerLane: vscode.OverviewRulerLane.Center,
+			rangeBehavior: vscode.DecorationRangeBehavior.OpenOpen,
+			isWholeLine: true,
+		});
+		this.readLabelDecoration = vscode.window.createTextEditorDecorationType({
+			before: {
+				contentText: '👁 reading ', // allow-any-unicode-next-line
+				color: new vscode.ThemeColor('descriptionForeground'),
+				margin: '0 6px 0 0',
+			},
+			rangeBehavior: vscode.DecorationRangeBehavior.OpenOpen,
+		});
 	}
 
 	resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -71,10 +91,15 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 							}
 						});
 				} else {
-					void vscode.commands.executeCommand('vscode.open', target);
+					void this.openFileWithHighlight(target, message.selection);
 				}
 			}
 		});
+
+		// Debug helper: keep simulateStream reachable without running by default.
+		if (process.env.CODEX_WEBVIEW_SIMULATE === 'true') {
+			void this.simulateStream(webview);
+		}
 	}
 
 	private async handlePrompt(webviewView: vscode.WebviewView, prompt: string): Promise<void> {
@@ -146,6 +171,8 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private forwardCodexEvent(webview: vscode.Webview, evt: CodexEvent): void {
+		this.clearReadHighlights(); // Always clear read highlights
+
 		if (evt.type === 'item.completed' && evt.item?.type === 'agent_message') {
 			this.postToWebview(webview, {
 				type: 'appendMessage',
@@ -156,6 +183,59 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			return;
 		}
 
+		if ((evt.type === 'item.completed' || evt.type === 'item.updated') && evt.item?.type === 'file_change') {
+			const changes: Array<{ path: string; kind?: string; diff?: string }> = Array.isArray(evt.item.changes) ? evt.item.changes : [];
+			const enriched = changes.map((change: { path: string; kind?: string; diff?: string }) => {
+				const absPath = this.lastCwd && !path.isAbsolute(change.path)
+					? path.join(this.lastCwd, change.path)
+					: change.path;
+				const inferredDiff = change.diff
+					?? gitDiffForPath(this.lastCwd, absPath)
+					?? fallbackDiffFromLastCommand(change.path, this.lastCwd, this.lastCommandOutput);
+				const line = inferredDiff
+					? parseFirstAddedLine(inferredDiff) ?? parseFirstTargetLine(inferredDiff)
+					: undefined;
+				const kind = (change.kind ?? '').toLowerCase();
+				return { ...change, absPath, line, kind: kind || change.kind, diff: inferredDiff };
+			});
+
+			const summary = enriched
+				.map((c) => {
+					const verb = c.kind === 'delete' ? 'Deleted' : c.kind === 'add' ? 'Added' : 'Updated';
+					return `${verb} ${path.basename(c.path)}`;
+				})
+				.join(', ');
+
+			const fallbackText = enriched.length > 0
+				? enriched
+					.map((c) => {
+						const verb = c.kind === 'delete' ? 'Deleted' : c.kind === 'add' ? 'Added' : 'Updated';
+						return `${verb} ${c.path}`;
+					})
+					.join('\n')
+				: 'Applied file changes.';
+
+			this.postToWebview(webview, {
+				type: 'appendMessage',
+				role: 'command',
+				friendlyTitle: 'Edited files',
+				friendlySummary: summary || 'Applied file changes',
+				fileChanges: enriched,
+				text: enriched.find((c) => c.diff)?.diff ?? fallbackText,
+			});
+
+			// Auto-open the first changed file and select the hunk if we have a line.
+			const first = enriched[0];
+			if (first?.absPath) {
+				const startLine = typeof first.line === 'number' ? Math.max(0, first.line - 1) : 0;
+				void vscode.window.showTextDocument(vscode.Uri.file(first.absPath), {
+					selection: new vscode.Range(startLine, 0, startLine, 0),
+					preview: true,
+				});
+			}
+			return;
+		}
+
 		if (evt.type === 'item.completed' && evt.item?.type === 'reasoning') {
 			this.postToWebview(webview, { type: 'reasoningUpdate', text: evt.item.text ?? '' });
 			return;
@@ -163,6 +243,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
 		if (evt.type === 'item.completed' && evt.item?.type === 'command_execution') {
 			const text = evt.item.aggregated_output ?? '';
+			this.lastCommandOutput = text || undefined;
 			const command = evt.item.command ?? '';
 			const summary = summarizeCommand(command);
 			const parsedWithAbs = summary.parsed.map((p) => {
@@ -361,6 +442,41 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		webview.postMessage(message).then(undefined, console.error);
 	}
 
+	private async openFileWithHighlight(target: vscode.Uri, selection?: { start: number; end?: number }): Promise<void> {
+		const editor = await vscode.window.showTextDocument(target, { preview: true });
+
+		// Clear prior read highlights to reduce noise.
+		this.clearReadHighlights();
+
+		if (!selection) {
+			return;
+		}
+
+		const startLine = Math.max(0, selection.start);
+		const endLine = Math.max(startLine, selection.end ?? selection.start);
+		const range = new vscode.Range(
+			new vscode.Position(startLine, 0),
+			new vscode.Position(endLine, Number.MAX_SAFE_INTEGER)
+		);
+
+		this.readHighlightsByDoc.set(target.toString(), [range]);
+		const labelRange = new vscode.Range(
+			new vscode.Position(startLine, 0),
+			new vscode.Position(startLine, 0)
+		);
+		editor.setDecorations(this.readDecoration, [range]);
+		editor.setDecorations(this.readLabelDecoration, [labelRange]);
+		editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+	}
+
+	private clearReadHighlights(): void {
+		for (const visible of vscode.window.visibleTextEditors) {
+			visible.setDecorations(this.readDecoration, []);
+			visible.setDecorations(this.readLabelDecoration, []);
+		}
+		this.readHighlightsByDoc.clear();
+	}
+
 	private getHtmlForWebview(webview: vscode.Webview): string {
 		if (this.isDevServerEnabled()) {
 			return this.getDevHtml(webview);
@@ -523,6 +639,152 @@ function getNonce(): string {
 		text += possible.charAt(Math.floor(Math.random() * possible.length));
 	}
 	return text;
+}
+
+function parseFirstTargetLine(diff: string): number | undefined {
+	// Unified diff headers look like: @@ -a,b +c,d @@
+	const match = diff.match(/@@[^+]*\+(\d+)(?:,(\d+))? @@/);
+	if (!match) {
+		return undefined;
+	}
+	const line = Number(match[1]);
+	return Number.isFinite(line) ? line : undefined;
+}
+
+function parseFirstAddedLine(diff: string): number | undefined {
+	const lines = diff.split(/\r?\n/);
+	let current: number | undefined;
+
+	for (const line of lines) {
+		const hunk = line.match(/^@@[^+]*\+(\d+)(?:,(\d+))? @@/);
+		if (hunk) {
+			current = Number(hunk[1]);
+			continue;
+		}
+		if (current === undefined) {
+			continue;
+		}
+		if (line.startsWith('+++') || line.startsWith('---')) {
+			continue;
+		}
+		if (line.startsWith('+')) {
+			return current;
+		}
+		if (line.startsWith(' ')) {
+			current += 1;
+		} else if (line.startsWith('-')) {
+			// deletion: new file line number does not advance
+			continue;
+		}
+	}
+	return undefined;
+}
+
+function fallbackDiffFromLastCommand(targetPath: string, cwd: string | undefined, lastOutput: string | undefined): string | undefined {
+	if (!lastOutput) {
+		return undefined;
+	}
+
+	const matchesCandidate = (text: string, candidates: Set<string>): boolean => {
+		for (const cand of candidates) {
+			const updateMarker = new RegExp(`Update File:\\s+${escapeForRegex(cand)}`);
+			const applyPatchMarker = new RegExp(`\\*\\*\\*\\s+(?:Update|Add|Delete) File:\\s+${escapeForRegex(cand)}`);
+			const diffGitMarker = new RegExp(`^diff --git\\s+a/${escapeForRegex(cand)}\\s+b/${escapeForRegex(cand)}`, 'm');
+			const plusPlusMarker = new RegExp(`^\\+\\+\\+\\s+b/${escapeForRegex(cand)}`, 'm');
+			if (updateMarker.test(text) || applyPatchMarker.test(text) || diffGitMarker.test(text) || plusPlusMarker.test(text)) {
+				return true;
+			}
+		}
+		return false;
+	};
+
+	// Normalize paths to improve matching (absolute, relative to cwd, basename).
+	const normalized = targetPath.replace(/\\/g, '/');
+	const candidates = new Set<string>([normalized]);
+	if (cwd) {
+		const normCwd = cwd.replace(/\\/g, '/');
+		if (normalized.startsWith(normCwd + '/')) {
+			candidates.add(normalized.slice(normCwd.length + 1));
+		}
+	}
+	const base = path.basename(normalized);
+	candidates.add(base);
+
+	// Prefer slicing out the relevant patch block when the last command produced a multi-file patch.
+	if (lastOutput.includes('*** Begin Patch')) {
+		const blocks = Array.from(lastOutput.matchAll(/\*\*\* Begin Patch[\s\S]*?\*\*\* End Patch/g));
+		for (const block of blocks) {
+			const text = block[0];
+			if (matchesCandidate(text, candidates)) {
+				return text;
+			}
+		}
+	}
+
+	// Handle git-style diffs containing multiple files.
+	if (lastOutput.includes('diff --git')) {
+		const sections = lastOutput.split(/(?=^diff --git\s+)/m).filter((s) => s.trim().length > 0);
+		for (const section of sections) {
+			if (matchesCandidate(section, candidates)) {
+				return section.trimEnd();
+			}
+		}
+	}
+
+	for (const cand of candidates) {
+		const updateMarker = new RegExp(`Update File:\\s+${escapeForRegex(cand)}`);
+		if (updateMarker.test(lastOutput)) {
+			return lastOutput;
+		}
+		const diffGitMarker = new RegExp(`diff --git\\s+a/${escapeForRegex(cand)}\\s+b/${escapeForRegex(cand)}`);
+		if (diffGitMarker.test(lastOutput)) {
+			return lastOutput;
+		}
+	}
+
+	if (lastOutput.includes('*** Begin Patch') || lastOutput.startsWith('diff --git')) {
+		return lastOutput;
+	}
+
+	return undefined;
+}
+
+function gitDiffForPath(cwd: string | undefined, absPath: string): string | undefined {
+	if (!cwd || !absPath) {
+		return undefined;
+	}
+
+	try {
+		// Ensure we're in a repo; if not, skip.
+		cp.execFileSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd, stdio: 'ignore' });
+	} catch {
+		return undefined;
+	}
+
+	const rel = path.isAbsolute(absPath) ? path.relative(cwd, absPath) || absPath : absPath;
+
+	const tryCommands: Array<string[]> = [
+		['diff', '-U3', '--', rel],
+		['diff', '-U3', 'HEAD', '--', rel],
+		['diff', '-U3', '--no-index', '/dev/null', rel],
+	];
+
+	for (const args of tryCommands) {
+		try {
+			const output = cp.execFileSync('git', args, { cwd, encoding: 'utf8' });
+			if (output.trim()) {
+				return output;
+			}
+		} catch {
+			// ignore and try next strategy
+		}
+	}
+
+	return undefined;
+}
+
+function escapeForRegex(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 interface ViteManifestEntry {

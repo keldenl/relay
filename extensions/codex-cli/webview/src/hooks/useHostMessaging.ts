@@ -58,6 +58,7 @@ function handleHostMessage(dispatch: React.Dispatch<Action>, message: HostToWebv
 					friendlySummary: message.friendlySummary,
 					targets: message.targets ?? [],
 					parsed: message.parsed ?? [],
+					fileChanges: message.fileChanges ?? [],
 				},
 			});
 			return;

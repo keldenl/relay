@@ -27,10 +27,23 @@ export function buildSummary(parsed: ParsedCommandPart[] | undefined, msg: Agent
 
 function renderPart(part: ParsedCommandPart): JSX.Element {
 	if (part.kind === READ_KIND) {
+		const lineStart = typeof part.lineStart === 'number' ? Math.max(0, part.lineStart) : undefined;
+		const lineEnd = typeof part.lineEnd === 'number' ? Math.max(lineStart ?? 0, part.lineEnd) : undefined;
+		const rangeLabel = lineStart !== undefined && lineEnd !== undefined
+			? `${lineStart + 1}-${lineEnd + 1}`
+			: undefined;
 		return (
 			<>
 				Read{' '}
-				<LinkToTarget label={part.label || part.name || part.path || part.raw || 'file'} path={part.absPath || part.path} />
+				<LinkToTarget
+					label={part.label || part.name || part.path || part.raw || 'file'}
+					path={part.absPath || part.path}
+					lineStart={lineStart}
+					lineEnd={lineEnd ?? lineStart}
+				/>
+				{rangeLabel ? (
+					<span className="ml-1 text-[11px] text-description align-middle">{rangeLabel}</span>
+				) : null}
 			</>
 		);
 	}
@@ -62,7 +75,13 @@ function renderPart(part: ParsedCommandPart): JSX.Element {
 	return <span>Ran {part.raw || part.label || part.name || part.path || 'command'}</span>;
 }
 
-export function LinkToTarget({ label, path, isDir }: { label: string; path?: string; isDir?: boolean }): JSX.Element {
+export function LinkToTarget({
+	label,
+	path,
+	isDir,
+	lineStart,
+	lineEnd,
+}: { label: string; path?: string; isDir?: boolean; lineStart?: number; lineEnd?: number }): JSX.Element {
 	if (!path) {
 		return <>{label}</>;
 	}
@@ -72,7 +91,15 @@ export function LinkToTarget({ label, path, isDir }: { label: string; path?: str
 			href="#"
 			onClick={(e) => {
 				e.preventDefault();
-				postMessage({ type: 'openPath', path, isDir: Boolean(isDir) });
+				const hasLineInfo = typeof lineStart === 'number' || typeof lineEnd === 'number';
+				const start = typeof lineStart === 'number' ? Math.max(0, lineStart) : 0;
+				const end = typeof lineEnd === 'number' ? Math.max(start, lineEnd) : start;
+				postMessage({
+					type: 'openPath',
+					path,
+					isDir: Boolean(isDir),
+					...(hasLineInfo && !isDir ? { selection: { start, end } } : {}),
+				});
 			}}
 		>
 			{label}

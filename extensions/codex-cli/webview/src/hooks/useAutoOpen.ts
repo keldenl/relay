@@ -21,11 +21,17 @@ export function useAutoOpen(messages: AgentMessage[], postMessage: (msg: Webview
 					continue;
 				}
 				const target = part.absPath || part.path;
-				if (!target || autoOpened.current.has(target)) {
+				if (!target) {
 					continue;
 				}
-				autoOpened.current.add(target);
-				postMessage({ type: 'openPath', path: target, isDir: false });
+				const start = typeof part.lineStart === 'number' ? Math.max(0, part.lineStart) : 0;
+				const end = typeof part.lineEnd === 'number' ? Math.max(start, part.lineEnd) : start;
+				const key = `${target}:${start}-${end}`;
+				if (autoOpened.current.has(key)) {
+					continue;
+				}
+				autoOpened.current.add(key);
+				postMessage({ type: 'openPath', path: target, isDir: false, selection: { start, end } });
 			}
 			renderedCount.current += 1;
 		}
