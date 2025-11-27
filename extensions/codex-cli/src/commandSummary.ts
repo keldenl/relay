@@ -549,7 +549,7 @@ function buildSummary(parsed: ParsedCommand[]): string | undefined {
 	const unknowns = parsed.filter((p) => p.kind === 'unknown');
 
 	if (reads.length) {
-		const names = Array.from(new Set(reads.map((r) => r.name ?? r.path ?? r.raw)));
+		const names = Array.from(new Set(reads.map((r) => formatReadLabel(r))));
 		parts.push(`Read ${names.join(', ')}`);
 	}
 	for (const list of lists) {
@@ -571,4 +571,20 @@ function buildSummary(parsed: ParsedCommand[]): string | undefined {
 	}
 
 	return parts.join(' · ');
+}
+
+function formatLineRange(lineStart?: number, lineEnd?: number): string | undefined {
+	if (typeof lineStart !== 'number' || lineStart < 0) {
+		return undefined;
+	}
+	if (typeof lineEnd !== 'number' || lineEnd < lineStart) {
+		return undefined;
+	}
+	return `${lineStart + 1}-${lineEnd + 1}`;
+}
+
+function formatReadLabel(read: ParsedCommand): string {
+	const base = read.name ?? read.path ?? read.raw ?? 'file';
+	const range = formatLineRange(read.lineStart, read.lineEnd);
+	return range ? `${base} ${range}` : base;
 }

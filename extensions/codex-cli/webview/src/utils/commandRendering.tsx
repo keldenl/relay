@@ -27,8 +27,11 @@ export function buildSummary(parsed: ParsedCommandPart[] | undefined, msg: Agent
 
 function renderPart(part: ParsedCommandPart): JSX.Element {
 	if (part.kind === READ_KIND) {
-		const lineStart = typeof part.lineStart === 'number' ? part.lineStart : 0;
-		const lineEnd = typeof part.lineEnd === 'number' ? part.lineEnd : lineStart;
+		const lineStart = typeof part.lineStart === 'number' ? Math.max(0, part.lineStart) : undefined;
+		const lineEnd = typeof part.lineEnd === 'number' ? Math.max(lineStart ?? 0, part.lineEnd) : undefined;
+		const rangeLabel = lineStart !== undefined && lineEnd !== undefined
+			? `${lineStart + 1}-${lineEnd + 1}`
+			: undefined;
 		return (
 			<>
 				Read{' '}
@@ -36,8 +39,11 @@ function renderPart(part: ParsedCommandPart): JSX.Element {
 					label={part.label || part.name || part.path || part.raw || 'file'}
 					path={part.absPath || part.path}
 					lineStart={lineStart}
-					lineEnd={lineEnd}
+					lineEnd={lineEnd ?? lineStart}
 				/>
+				{rangeLabel ? (
+					<span className="ml-1 text-[11px] text-description align-middle">{rangeLabel}</span>
+				) : null}
 			</>
 		);
 	}
