@@ -8,6 +8,7 @@ import type { AgentMessage, ReasoningEffortOption } from '@shared/messages';
 import MessageList from './MessageList';
 import { cn } from '../utils/cn';
 import TopBar from './TopBar';
+import { ArrowUp } from 'lucide-react';
 
 interface Props {
 	visible: boolean;
@@ -60,12 +61,12 @@ export default function AgentShell({
 				<div>{reasoning || 'Thinking…'}</div>
 			</div>
 
-			<div className="bg-editor px-4 py-2">
+			<div className="bg-editor px-4 pt-2 pb-4">
 				<form className="flex items-center gap-2" aria-label="Send a prompt" onSubmit={onSubmit}>
 					<input
 						type="text"
 						name="prompt"
-						placeholder="Ask anything..."
+						placeholder="Describe the task..."
 						aria-label="Agent prompt"
 						value={input}
 						onChange={(e) => setInput(e.target.value)}
@@ -75,9 +76,9 @@ export default function AgentShell({
 					<button
 						type="submit"
 						disabled={busy || !input.trim()}
-						className="min-w-[72px] rounded-md border border-button bg-button-secondary px-3 py-1.5 text-xs font-semibold text-button-secondary shadow-sm transition-opacity disabled:cursor-default disabled:opacity-60"
+						className="rounded-full border border-button bg-button p-2 text-button shadow-sm transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-60"
 					>
-						Send
+						<ArrowUp className="size-5"/>
 					</button>
 				</form>
 			</div>

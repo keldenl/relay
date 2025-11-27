@@ -6,6 +6,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReasoningEffortOption } from '@shared/messages';
 import { cn } from '../utils/cn';
+import {Check, ChevronDown} from 'lucide-react';
 
 type Props = {
 	effort: ReasoningEffortOption;
@@ -66,11 +67,10 @@ export default function TopBar({ effort, onChange }: Props): JSX.Element {
 					aria-haspopup="listbox"
 					aria-expanded={open}
 					onClick={() => setOpen((v) => !v)}
-					className="group inline-flex items-center gap-2 text-description text-lg font-light transition hover:border-button hover:text-button focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--vscode-focusBorder)]"
+					className="group inline-flex items-center gap-1 text-description text-lg font-light transition cursor-pointer hover:border-button hover:text-button focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--vscode-focusBorder)]"
 				>
 					<span className="truncate"><span className="font-normal text-editor">GPT{" "}</span>{title}</span>
-					{/* // allow-any-unicode-next-line */}
-					<span className={cn('transition-transform', open && 'rotate-180')}>▾</span>
+					<ChevronDown className={cn('transition-transform size-4', open && 'rotate-180')}/>
 				</button>
 
 				{open && (
@@ -98,7 +98,7 @@ export default function TopBar({ effort, onChange }: Props): JSX.Element {
 										<div className="text-sm font-semibold text-editor">{meta.title}</div>
 										<div className="text-xs text-description">{meta.description}</div>
 									</div>
-									{active && <div className="text-button text-sm">✓</div>}
+									{active && <Check className="text-button size-4"/>}
 								</button>
 							);
 						})}
