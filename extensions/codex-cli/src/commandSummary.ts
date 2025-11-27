@@ -24,6 +24,8 @@ export interface ParsedCommand {
 	name?: string;
 	path?: string;
 	query?: string;
+	lineStart?: number;
+	lineEnd?: number;
 }
 
 export interface CommandSummary {
@@ -178,18 +180,21 @@ function summarizeMainTokens(tokens: string[]): ParsedCommand {
 					raw: joinTokens(tokens),
 					name: shortDisplayPath(pathArg),
 					path: pathArg,
+					lineStart: 0,
 				};
 			}
 			break;
 		}
 		case 'head': {
-			const pathArg = extractHeadTailPath(tail);
-			if (pathArg) {
+			const headMeta = parseHeadMeta(tail);
+			if (headMeta?.path) {
 				return {
 					kind: 'read',
 					raw: joinTokens(tokens),
-					name: shortDisplayPath(pathArg),
-					path: pathArg,
+					name: shortDisplayPath(headMeta.path),
+					path: headMeta.path,
+					lineStart: headMeta.lineStart,
+					lineEnd: headMeta.lineEnd,
 				};
 			}
 			break;
@@ -222,11 +227,14 @@ function summarizeMainTokens(tokens: string[]): ParsedCommand {
 		case 'sed': {
 			if (tail[0] === '-n' && isValidSedRange(tail[1]) && tail[2]) {
 				const pathArg = tail[2];
+				const range = parseSedRange(tail[1]);
 				return {
 					kind: 'read',
 					raw: joinTokens(tokens),
 					name: shortDisplayPath(pathArg),
 					path: pathArg,
+					lineStart: range?.lineStart,
+					lineEnd: range?.lineEnd,
 				};
 			}
 			break;
@@ -422,6 +430,22 @@ function isValidSedRange(arg?: string): boolean {
 	return /^(\d+|\d+,\d+)$/.test(core);
 }
 
+function parseSedRange(arg?: string): { lineStart?: number; lineEnd?: number } | undefined {
+	if (!isValidSedRange(arg)) {
+		return undefined;
+	}
+	if (!arg) {
+		return undefined;
+	}
+	const core = arg.endsWith('p') ? arg.slice(0, -1) : arg;
+	const [startRaw, endRaw] = core.split(',');
+	const startNum = Number.parseInt(startRaw, 10);
+	const endNum = endRaw ? Number.parseInt(endRaw, 10) : undefined;
+	const lineStart = Number.isFinite(startNum) ? Math.max(0, startNum - 1) : undefined;
+	const lineEnd = endNum && Number.isFinite(endNum) ? Math.max(0, endNum - 1) : lineStart;
+	return { lineStart, lineEnd };
+}
+
 function extractHeadTailPath(args: string[]): string | undefined {
 	const argsNoConnector = trimAtConnector(args);
 	// Remove -n <num> or -n<num> prefix so the first remaining positional is a path.
@@ -438,6 +462,40 @@ function extractHeadTailPath(args: string[]): string | undefined {
 	}
 	const pathArg = stripped.find((a) => !a.startsWith('-'));
 	return pathArg;
+}
+
+function parseHeadMeta(args: string[]): { path?: string; lineStart?: number; lineEnd?: number } | undefined {
+	const argsNoConnector = trimAtConnector(args);
+	let count: number | undefined;
+	const stripped: string[] = [];
+
+	for (let i = 0; i < argsNoConnector.length; i++) {
+		const a = argsNoConnector[i];
+		if (a === '-n') {
+			const next = argsNoConnector[i + 1];
+			if (next && !next.startsWith('-')) {
+				const n = Number.parseInt(next, 10);
+				count = Number.isFinite(n) ? n : undefined;
+				i++; // skip count token
+				continue;
+			}
+		}
+		if (a.startsWith('-n') && a !== '-n') {
+			const n = Number.parseInt(a.slice(2), 10);
+			count = Number.isFinite(n) ? n : undefined;
+			continue;
+		}
+		stripped.push(a);
+	}
+
+	const path = stripped.find((a) => !a.startsWith('-'));
+	if (!path) {
+		return undefined;
+	}
+
+	const lineStart = 0;
+	const lineEnd = typeof count === 'number' && count > 0 ? Math.max(0, count - 1) : undefined;
+	return { path, lineStart, lineEnd };
 }
 
 function isShell(token: string): boolean {

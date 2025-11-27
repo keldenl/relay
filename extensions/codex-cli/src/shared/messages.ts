@@ -15,6 +15,8 @@ export interface ParsedCommandPart {
 	absPath?: string;
 	label?: string;
 	query?: string;
+	lineStart?: number;
+	lineEnd?: number;
 }
 
 export interface FileChangePreview {

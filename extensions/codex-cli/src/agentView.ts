@@ -15,13 +15,31 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewId = 'codexAgentView';
 
 	private readonly codexClient: CodexClient;
+	private readonly readDecoration: vscode.TextEditorDecorationType;
+	private readonly readLabelDecoration: vscode.TextEditorDecorationType;
 	private busy = false;
 	private authStatus: AuthStatus = 'checking';
 	private lastCwd: string | undefined;
 	private lastCommandOutput: string | undefined;
+	private readHighlightsByDoc = new Map<string, vscode.Range[]>();
 
 	constructor(private readonly context: vscode.ExtensionContext) {
 		this.codexClient = new CodexClient(context);
+		this.readDecoration = vscode.window.createTextEditorDecorationType({
+			backgroundColor: new vscode.ThemeColor('editor.selectionHighlightBackground'),
+			overviewRulerColor: new vscode.ThemeColor('editor.selectionHighlightBackground'),
+			overviewRulerLane: vscode.OverviewRulerLane.Center,
+			rangeBehavior: vscode.DecorationRangeBehavior.OpenOpen,
+			isWholeLine: true,
+		});
+		this.readLabelDecoration = vscode.window.createTextEditorDecorationType({
+			before: {
+				contentText: '👁 reading ', // allow-any-unicode-next-line
+				color: new vscode.ThemeColor('descriptionForeground'),
+				margin: '0 6px 0 0',
+			},
+			rangeBehavior: vscode.DecorationRangeBehavior.OpenOpen,
+		});
 	}
 
 	resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -73,16 +91,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 							}
 						});
 				} else {
-					if (message.selection) {
-						const start = new vscode.Position(message.selection.start, 0);
-						const end = new vscode.Position(message.selection.end ?? message.selection.start, 0);
-						void vscode.window.showTextDocument(target, {
-							selection: new vscode.Range(start, end),
-							preview: true,
-						});
-					} else {
-						void vscode.commands.executeCommand('vscode.open', target);
-					}
+					void this.openFileWithHighlight(target, message.selection);
 				}
 			}
 		});
@@ -162,6 +171,8 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private forwardCodexEvent(webview: vscode.Webview, evt: CodexEvent): void {
+		this.clearReadHighlights(); // Always clear read highlights
+
 		if (evt.type === 'item.completed' && evt.item?.type === 'agent_message') {
 			this.postToWebview(webview, {
 				type: 'appendMessage',
@@ -428,6 +439,41 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
 	private postToWebview(webview: vscode.Webview, message: HostToWebviewMessage): void {
 		webview.postMessage(message).then(undefined, console.error);
+	}
+
+	private async openFileWithHighlight(target: vscode.Uri, selection?: { start: number; end?: number }): Promise<void> {
+		const editor = await vscode.window.showTextDocument(target, { preview: true });
+
+		// Clear prior read highlights to reduce noise.
+		this.clearReadHighlights();
+
+		if (!selection) {
+			return;
+		}
+
+		const startLine = Math.max(0, selection.start);
+		const endLine = Math.max(startLine, selection.end ?? selection.start);
+		const range = new vscode.Range(
+			new vscode.Position(startLine, 0),
+			new vscode.Position(endLine, Number.MAX_SAFE_INTEGER)
+		);
+
+		this.readHighlightsByDoc.set(target.toString(), [range]);
+		const labelRange = new vscode.Range(
+			new vscode.Position(startLine, 0),
+			new vscode.Position(startLine, 0)
+		);
+		editor.setDecorations(this.readDecoration, [range]);
+		editor.setDecorations(this.readLabelDecoration, [labelRange]);
+		editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+	}
+
+	private clearReadHighlights(): void {
+		for (const visible of vscode.window.visibleTextEditors) {
+			visible.setDecorations(this.readDecoration, []);
+			visible.setDecorations(this.readLabelDecoration, []);
+		}
+		this.readHighlightsByDoc.clear();
 	}
 
 	private getHtmlForWebview(webview: vscode.Webview): string {

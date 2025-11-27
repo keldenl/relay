@@ -27,10 +27,17 @@ export function buildSummary(parsed: ParsedCommandPart[] | undefined, msg: Agent
 
 function renderPart(part: ParsedCommandPart): JSX.Element {
 	if (part.kind === READ_KIND) {
+		const lineStart = typeof part.lineStart === 'number' ? part.lineStart : 0;
+		const lineEnd = typeof part.lineEnd === 'number' ? part.lineEnd : lineStart;
 		return (
 			<>
 				Read{' '}
-				<LinkToTarget label={part.label || part.name || part.path || part.raw || 'file'} path={part.absPath || part.path} />
+				<LinkToTarget
+					label={part.label || part.name || part.path || part.raw || 'file'}
+					path={part.absPath || part.path}
+					lineStart={lineStart}
+					lineEnd={lineEnd}
+				/>
 			</>
 		);
 	}
@@ -62,7 +69,13 @@ function renderPart(part: ParsedCommandPart): JSX.Element {
 	return <span>Ran {part.raw || part.label || part.name || part.path || 'command'}</span>;
 }
 
-export function LinkToTarget({ label, path, isDir }: { label: string; path?: string; isDir?: boolean }): JSX.Element {
+export function LinkToTarget({
+	label,
+	path,
+	isDir,
+	lineStart,
+	lineEnd,
+}: { label: string; path?: string; isDir?: boolean; lineStart?: number; lineEnd?: number }): JSX.Element {
 	if (!path) {
 		return <>{label}</>;
 	}
@@ -72,7 +85,15 @@ export function LinkToTarget({ label, path, isDir }: { label: string; path?: str
 			href="#"
 			onClick={(e) => {
 				e.preventDefault();
-				postMessage({ type: 'openPath', path, isDir: Boolean(isDir) });
+				const hasLineInfo = typeof lineStart === 'number' || typeof lineEnd === 'number';
+				const start = typeof lineStart === 'number' ? Math.max(0, lineStart) : 0;
+				const end = typeof lineEnd === 'number' ? Math.max(start, lineEnd) : start;
+				postMessage({
+					type: 'openPath',
+					path,
+					isDir: Boolean(isDir),
+					...(hasLineInfo && !isDir ? { selection: { start, end } } : {}),
+				});
 			}}
 		>
 			{label}
