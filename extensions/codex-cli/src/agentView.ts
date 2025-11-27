@@ -9,10 +9,17 @@ import * as fs from 'fs';
 import * as cp from 'child_process';
 import { CodexBinaryError, CodexClient, CodexEvent } from './codexClient';
 import { summarizeCommand } from './commandSummary';
-import { isWebviewToHostMessage, type HostToWebviewMessage, type WebviewToHostMessage, type AuthStatus } from './shared/messages';
+import {
+	isWebviewToHostMessage,
+	type HostToWebviewMessage,
+	type WebviewToHostMessage,
+	type AuthStatus,
+	type ReasoningEffortOption
+} from './shared/messages';
 
 export class AgentViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewId = 'codexAgentView';
+	private static readonly reasoningStateKey = 'codex.reasoningEffort';
 
 	private readonly codexClient: CodexClient;
 	private readonly readDecoration: vscode.TextEditorDecorationType;
@@ -22,9 +29,11 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 	private lastCwd: string | undefined;
 	private lastCommandOutput: string | undefined;
 	private readHighlightsByDoc = new Map<string, vscode.Range[]>();
+	private reasoningEffort: ReasoningEffortOption;
 
 	constructor(private readonly context: vscode.ExtensionContext) {
 		this.codexClient = new CodexClient(context);
+		this.reasoningEffort = this.getStoredReasoningEffort();
 		this.readDecoration = vscode.window.createTextEditorDecorationType({
 			backgroundColor: new vscode.ThemeColor('editor.selectionHighlightBackground'),
 			overviewRulerColor: new vscode.ThemeColor('editor.selectionHighlightBackground'),
@@ -54,6 +63,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		};
 
 		webview.html = this.getHtmlForWebview(webview);
+		this.postReasoningState(webview);
 		void this.refreshAuthState(webviewView);
 
 		webview.onDidReceiveMessage((raw) => {
@@ -74,6 +84,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
 			if (message.type === 'requestStatus') {
 				void this.refreshAuthState(webviewView);
+				this.postReasoningState(webview);
 			}
 
 			if (message.type === 'openPath') {
@@ -93,6 +104,10 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 				} else {
 					void this.openFileWithHighlight(target, message.selection);
 				}
+			}
+
+			if (message.type === 'setReasoningEffort') {
+				void this.updateReasoningEffort(message.effort, webview);
 			}
 		});
 
@@ -152,8 +167,10 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		});
 
 		try {
-			// await this.simulateStream(webview); // Comment this in for simluation
-			await this.codexClient.runExec(trimmed, cwd, (evt) => this.forwardCodexEvent(webview, evt));
+			await this.simulateStream(webview); // Comment this in for simluation
+			// await this.codexClient.runExec(trimmed, cwd, (evt) => this.forwardCodexEvent(webview, evt), {
+			// 	reasoningEffort: this.reasoningEffort,
+			// });
 
 		} catch (err) {
 			const handled = await this.handleRunError(webview, err);
@@ -475,6 +492,29 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			visible.setDecorations(this.readLabelDecoration, []);
 		}
 		this.readHighlightsByDoc.clear();
+	}
+
+	private getStoredReasoningEffort(): ReasoningEffortOption {
+		const stored = this.context.globalState.get<ReasoningEffortOption>(AgentViewProvider.reasoningStateKey);
+		return stored ?? 'medium';
+	}
+
+	private postReasoningState(webview: vscode.Webview): void {
+		this.postToWebview(webview, {
+			type: 'reasoningState',
+			effort: this.reasoningEffort,
+		});
+	}
+
+	private async updateReasoningEffort(effort: ReasoningEffortOption, webview?: vscode.Webview): Promise<void> {
+		if (!effort || this.reasoningEffort === effort) {
+			return;
+		}
+		this.reasoningEffort = effort;
+		await this.context.globalState.update(AgentViewProvider.reasoningStateKey, effort);
+		if (webview) {
+			this.postReasoningState(webview);
+		}
 	}
 
 	private getHtmlForWebview(webview: vscode.Webview): string {

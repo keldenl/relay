@@ -16,7 +16,7 @@ export default function App(): JSX.Element {
 	const listRef = useRef<HTMLDivElement | null>(null);
 
 	const { state, handlers, postMessage } = useHostMessaging();
-	const { auth, busy, reasoning, messages } = state;
+	const { auth, busy, reasoning, messages, reasoningEffort } = state;
 
 	useAutoOpen(messages, postMessage);
 	useAutoScroll(listRef, [messages, reasoning, busy]);
@@ -57,6 +57,8 @@ export default function App(): JSX.Element {
 				setInput={setInput}
 				onSubmit={onSubmit}
 				listRef={listRef}
+				reasoningEffort={reasoningEffort}
+				onReasoningEffortChange={handlers.setReasoningEffort}
 			/>
 		</div>
 	);

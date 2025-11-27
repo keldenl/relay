@@ -67,6 +67,10 @@
 		transition: opacity 0.18s ease, transform 0.18s ease;
 	}
 
+	.message:not(.user) {
+		margin: 0 calc(var(--spacing) * 2);
+	}
+
 	.message.is-entering {
 		opacity: 0;
 		transform: translateY(6px);
