@@ -55,6 +55,9 @@ interface IPartsSplashOverride {
 	};
 }
 
+const DEFAULT_SIDE_BAR_WIDTH = 220;
+const DEFAULT_AUX_BAR_WIDTH = 600;
+
 export class ThemeMainService extends Disposable implements IThemeMainService {
 
 	declare readonly _serviceBrand: undefined;
@@ -371,19 +374,19 @@ export class ThemeMainService extends Disposable implements IThemeMainService {
 		if (!override?.layoutInfo) {
 			override = {
 				layoutInfo: {
-					sideBarWidth: ThemeMainService.DEFAULT_BAR_WIDTH,
-					auxiliaryBarWidth: ThemeMainService.DEFAULT_BAR_WIDTH,
+					sideBarWidth: DEFAULT_SIDE_BAR_WIDTH,
+					auxiliaryBarWidth: DEFAULT_AUX_BAR_WIDTH,
 					workspaces: {}
 				}
 			};
 		}
 
 		if (!override.layoutInfo.sideBarWidth) {
-			override.layoutInfo.sideBarWidth = ThemeMainService.DEFAULT_BAR_WIDTH;
+			override.layoutInfo.sideBarWidth = DEFAULT_SIDE_BAR_WIDTH;
 		}
 
 		if (!override.layoutInfo.auxiliaryBarWidth) {
-			override.layoutInfo.auxiliaryBarWidth = ThemeMainService.DEFAULT_BAR_WIDTH;
+			override.layoutInfo.auxiliaryBarWidth = DEFAULT_AUX_BAR_WIDTH;
 		}
 
 		if (!override.layoutInfo.workspaces) {

@@ -2855,9 +2855,9 @@ class LayoutStateModel extends Disposable {
 		// Set dynamic defaults: part sizing and side bar visibility
 		const workbenchState = this.contextService.getWorkbenchState();
 		const mainContainerDimension = configuration.mainContainerDimension;
-		LayoutStateKeys.SIDEBAR_SIZE.defaultValue = Math.min(300, mainContainerDimension.width / 4);
-		LayoutStateKeys.SIDEBAR_HIDDEN.defaultValue = workbenchState === WorkbenchState.EMPTY;
-		LayoutStateKeys.AUXILIARYBAR_SIZE.defaultValue = Math.min(300, mainContainerDimension.width / 4);
+		LayoutStateKeys.SIDEBAR_SIZE.defaultValue = Math.min(220, Math.max(180, mainContainerDimension.width / 6));
+		LayoutStateKeys.SIDEBAR_HIDDEN.defaultValue = true; // hide primary sidebar by default (agent-first layout)
+		LayoutStateKeys.AUXILIARYBAR_SIZE.defaultValue = Math.min(600, Math.max(400, mainContainerDimension.width * 0.65));
 		LayoutStateKeys.AUXILIARYBAR_HIDDEN.defaultValue = (() => {
 			if (isWeb && !this.environmentService.remoteAuthority) {
 				return true; // TODO@bpasero remove this condition once Chat web support lands
