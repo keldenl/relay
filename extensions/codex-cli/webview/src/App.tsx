@@ -22,7 +22,6 @@ export default function App(): JSX.Element {
 	useAutoScroll(listRef, [messages, reasoning, busy]);
 
 	const showAgent = auth.status === 'loggedIn';
-	const showReasoning = busy || Boolean(reasoning?.trim());
 
 	const onSubmit = useMemo(
 		() => (event?: React.FormEvent) => {
@@ -50,8 +49,6 @@ export default function App(): JSX.Element {
 			<AgentShell
 				visible={showAgent}
 				messages={messages}
-				reasoning={reasoning}
-				showReasoning={showReasoning}
 				busy={busy}
 				input={input}
 				setInput={setInput}

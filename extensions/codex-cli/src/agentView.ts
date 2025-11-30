@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as cp from 'child_process';
 import { CodexBinaryError, CodexClient, CodexEvent } from './codexClient';
 import { summarizeCommand } from './commandSummary';
+import { AgentOverlayController, AgentOverlayMode } from './agentOverlay';
 import {
 	isWebviewToHostMessage,
 	type HostToWebviewMessage,
@@ -24,10 +25,12 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 	private readonly codexClient: CodexClient;
 	private readonly readDecoration: vscode.TextEditorDecorationType;
 	private readonly readLabelDecoration: vscode.TextEditorDecorationType;
+	private readonly overlay: AgentOverlayController;
 	private busy = false;
 	private authStatus: AuthStatus = 'checking';
 	private lastCwd: string | undefined;
 	private lastCommandOutput: string | undefined;
+	private lastOverlayLabel: string | undefined;
 	private readHighlightsByDoc = new Map<string, vscode.Range[]>();
 	private reasoningEffort: ReasoningEffortOption;
 
@@ -49,6 +52,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			},
 			rangeBehavior: vscode.DecorationRangeBehavior.OpenOpen,
 		});
+		this.overlay = new AgentOverlayController();
 	}
 
 	resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -158,6 +162,11 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
 		this.busy = true;
 		this.postToWebview(webview, { type: 'setBusy', busy: true });
+		void this.overlay.show({
+			label: 'Working',
+			mode: 'thinking',
+			targetUri: vscode.window.activeTextEditor?.document.uri,
+		});
 
 		// Echo the user's prompt into the log for context.
 		this.postToWebview(webview, {
@@ -184,11 +193,15 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		} finally {
 			this.busy = false;
 			this.postToWebview(webview, { type: 'setBusy', busy: false });
+			this.clearOverlay();
 		}
 	}
 
 	private forwardCodexEvent(webview: vscode.Webview, evt: CodexEvent): void {
 		this.clearReadHighlights(); // Always clear read highlights
+		if (evt.type === 'turn.completed') {
+			this.clearOverlay();
+		}
 
 		if (evt.type === 'item.completed' && evt.item?.type === 'agent_message') {
 			this.postToWebview(webview, {
@@ -241,8 +254,12 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 				text: enriched.find((c) => c.diff)?.diff ?? fallbackText,
 			});
 
-			// Auto-open the first changed file and select the hunk if we have a line.
 			const first = enriched[0];
+			const targetUri = first?.absPath ? vscode.Uri.file(first.absPath) : this.getActiveEditorUri();
+			const targetRange = first?.line ? { startLine: first.line } : undefined;
+			void this.pushOverlay(first ? `${first.kind === 'delete' ? 'Deleting' : 'Editing'} ${path.basename(first.path)}` : 'Editing files', 'editing', targetUri, targetRange);
+
+			// Auto-open the first changed file and select the hunk if we have a line.
 			if (first?.absPath) {
 				const startLine = typeof first.line === 'number' ? Math.max(0, first.line - 1) : 0;
 				void vscode.window.showTextDocument(vscode.Uri.file(first.absPath), {
@@ -255,6 +272,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
 		if (evt.type === 'item.completed' && evt.item?.type === 'reasoning') {
 			this.postToWebview(webview, { type: 'reasoningUpdate', text: evt.item.text ?? '' });
+			void this.pushOverlay(evt.item.text ?? 'Thinking…', 'thinking', this.getActiveEditorUri());
 			return;
 		}
 
@@ -292,6 +310,9 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 				targets,
 				parsed: parsedWithAbs,
 			});
+			const firstPath = parsedWithAbs.find((p) => p.absPath)?.absPath;
+			const targetUri = firstPath ? vscode.Uri.file(firstPath) : this.getActiveEditorUri();
+			void this.pushOverlay(summary.summary || summary.displayCommand || 'Running command', 'executing', targetUri);
 		}
 	}
 
@@ -484,6 +505,10 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		editor.setDecorations(this.readDecoration, [range]);
 		editor.setDecorations(this.readLabelDecoration, [labelRange]);
 		editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+
+		const startOverlayLine = selection ? selection.start + 1 : startLine + 1;
+		const endOverlayLine = selection?.end !== undefined ? selection.end + 1 : undefined;
+		void this.pushOverlay(`Reading ${path.basename(target.fsPath)}`, 'reading', target, { startLine: startOverlayLine, endLine: endOverlayLine });
 	}
 
 	private clearReadHighlights(): void {
@@ -515,6 +540,39 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		if (webview) {
 			this.postReasoningState(webview);
 		}
+	}
+
+	private async pushOverlay(label: string, mode: AgentOverlayMode, targetUri?: vscode.Uri, targetRange?: { startLine: number; endLine?: number }): Promise<void> {
+		const normalized = this.normalizeOverlayLabel(label) || 'Thinking…';
+		if (normalized === this.lastOverlayLabel && mode === 'thinking') {
+			return;
+		}
+		this.lastOverlayLabel = normalized;
+		await this.overlay.show({
+			label: normalized,
+			mode,
+			targetUri,
+			targetRange,
+		});
+	}
+
+	private clearOverlay(): void {
+		this.lastOverlayLabel = undefined;
+		void this.overlay.clear();
+	}
+
+	private normalizeOverlayLabel(raw: string | undefined): string {
+		if (!raw) {
+			return '';
+		}
+		return raw
+			.replace(/[*_`~]+/g, ' ')
+			.replace(/\s+/g, ' ')
+			.trim();
+	}
+
+	private getActiveEditorUri(): vscode.Uri | undefined {
+		return vscode.window.activeTextEditor?.document.uri;
 	}
 
 	private getHtmlForWebview(webview: vscode.Webview): string {

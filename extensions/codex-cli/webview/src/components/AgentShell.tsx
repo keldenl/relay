@@ -6,15 +6,12 @@
 import React from 'react';
 import type { AgentMessage, ReasoningEffortOption } from '@shared/messages';
 import MessageList from './MessageList';
-import { cn } from '../utils/cn';
 import TopBar from './TopBar';
 import { ArrowUp } from 'lucide-react';
 
 interface Props {
 	visible: boolean;
 	messages: AgentMessage[];
-	reasoning: string;
-	showReasoning: boolean;
 	busy: boolean;
 	input: string;
 	setInput: (v: string) => void;
@@ -27,8 +24,6 @@ interface Props {
 export default function AgentShell({
 	visible,
 	messages,
-	reasoning,
-	showReasoning,
 	busy,
 	input,
 	setInput,
@@ -49,17 +44,6 @@ export default function AgentShell({
 			>
 				<MessageList messages={messages} />
 			</section>
-
-			<div className={cn(
-				'mx-auto mb-3 inline-flex items-center gap-2 rounded-full border border-button bg-button-secondary px-3 py-1.5 text-xs font-semibold text-button-secondary shadow-sm',
-				!showReasoning && 'hidden'
-			)} aria-hidden={!showReasoning} aria-live="polite">
-				<div
-					className="h-2 w-2 flex-shrink-0 animate-spin rounded-full border-2 border-button-secondary border-t-transparent"
-					aria-hidden="true"
-				/>
-				<div>{reasoning || 'Thinking…'}</div>
-			</div>
 
 			<div className="bg-editor px-4 pt-2 pb-4">
 				<form className="flex items-center gap-2" aria-label="Send a prompt" onSubmit={onSubmit}>
