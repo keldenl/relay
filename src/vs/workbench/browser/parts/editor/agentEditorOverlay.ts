@@ -31,6 +31,7 @@ export class AgentEditorOverlay extends Disposable {
 	private readonly svgEye: HTMLElement;
 	private readonly svgLoader: HTMLElement;
 	private readonly svgEdit: HTMLElement;
+	private readonly workbenchRoot: HTMLElement;
 
 	private readonly editorListeners = this._register(new MutableDisposable<DisposableStore>());
 	private activeCodeEditor: ICodeEditor | undefined;
@@ -106,7 +107,10 @@ export class AgentEditorOverlay extends Disposable {
 		this.label.appendChild(this.labelText);
 		this.cursorBody.appendChild(this.label);
 
-		this.host.appendChild(this.container);
+
+		const root = host.closest('.monaco-workbench') ?? host.ownerDocument.body;
+		this.workbenchRoot = root as HTMLElement;
+		this.workbenchRoot.appendChild(this.container);
 	}
 
 	setState(state: AgentOverlayState | undefined): void {
@@ -159,6 +163,11 @@ export class AgentEditorOverlay extends Disposable {
 		const hostRect = this.host.getBoundingClientRect();
 		const fallbackWidth = Math.max(0, hostRect.width);
 		const fallbackHeight = Math.max(0, hostRect.height);
+
+		this.container.style.left = `${Math.round(hostRect.left)}px`;
+		this.container.style.top = `${Math.round(hostRect.top)}px`;
+		this.container.style.width = `${Math.round(fallbackWidth)}px`;
+		this.container.style.height = `${Math.round(fallbackHeight)}px`;
 		let top = fallbackHeight / 2;
 		let left = fallbackWidth / 2;
 
@@ -269,5 +278,10 @@ export class AgentEditorOverlay extends Disposable {
 		}
 		wrapper.appendChild(svg);
 		return wrapper;
+	}
+
+	override dispose(): void {
+		this.container.remove();
+		super.dispose();
 	}
 }

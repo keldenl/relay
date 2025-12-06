@@ -43,3 +43,10 @@ Use the following rules for specs:
 
 After creating the spec, ask the user to review it. Proceed with implementing the spec only once
 the user confirms that it is complete and correct.
+
+## Session Notes (context for next run)
+- After each request, append concise, high-value context here (what components are in play, toggles/modes, key file paths). Skip redundant play-by-play of the work just finished.
+- Agent overlay lives in `src/vs/workbench/browser/parts/editor/agentEditorOverlay.ts` with styles in `.../media/agentEditorOverlay.css`.
+- Container is attached to `.monaco-workbench` (fixed positioning); label/cursor visuals come from the CSS file above.
+- Font for overlay text relies on `var(--vscode-font-family, var(--monaco-monospace-font, system-ui))` to avoid fallback to Times.
+- Codex CLI webview runner: see `extensions/codex-cli/src/agentView.ts`; simulation mode currently enabled (real exec commented).

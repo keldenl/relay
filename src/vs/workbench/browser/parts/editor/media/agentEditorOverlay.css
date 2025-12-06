@@ -8,8 +8,12 @@
 }
 
 .codex-agent-overlay {
-	position: absolute;
-	inset: 0;
+	position: fixed;
+	left: 0;
+	top: 0;
+	width: 0;
+	height: 0;
+	font-family: var(--vscode-font-family, var(--monaco-monospace-font, system-ui)), system-ui, -apple-system, "Segoe UI", sans-serif;
 	pointer-events: none;
 	opacity: 0;
 	transition: opacity 120ms ease-out;

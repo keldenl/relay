@@ -987,6 +987,7 @@
 		"--vscode-chat-font-size-body-xl",
 		"--vscode-chat-font-size-body-xs",
 		"--vscode-chat-font-size-body-xxl",
+		"--vscode-font-family",
 		"--comment-thread-editor-font-family",
 		"--comment-thread-editor-font-weight",
 		"--comment-thread-state-color",
