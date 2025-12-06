@@ -192,8 +192,8 @@ export class AgentEditorOverlay extends Disposable {
 				// Prefer center; when reading, skew slightly left to avoid clipping on the right.
 				const cursorX = offsetLeft + layout.contentLeft + (
 					this.state?.mode === 'reading'
-						? layout.contentWidth * 0.3
-						: layout.contentWidth * 0.5
+						? layout.contentWidth * 0.8
+						: layout.contentWidth * 0.6
 				);
 
 				top = clamp(cursorY, 0, hostRect.height);
