@@ -50,3 +50,4 @@ the user confirms that it is complete and correct.
 - Container is attached to `.monaco-workbench` (fixed positioning); label/cursor visuals come from the CSS file above.
 - Font for overlay text relies on `var(--vscode-font-family, var(--monaco-monospace-font, system-ui))` to avoid fallback to Times.
 - Codex CLI webview runner: see `extensions/codex-cli/src/agentView.ts`; simulation mode currently enabled (real exec commented).
+- Repo is a VS Code fork branded "Relay" aimed at non-coders; main upstream docs remain in `README-VSCODE.md`.
