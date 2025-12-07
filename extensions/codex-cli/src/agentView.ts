@@ -7,7 +7,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as cp from 'child_process';
-import { CodexBinaryError, CodexClient, CodexEvent } from './codexClient';
+import { CodexClient, CodexEvent } from './codexClient';
 import { summarizeCommand } from './commandSummary';
 import { AgentOverlayController, AgentOverlayMode, AgentOverlayPayload } from './agentOverlay';
 import {
@@ -327,7 +327,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 	private async handleRunError(webview: vscode.Webview, err: unknown): Promise<boolean> {
 		const nodeErr = err as NodeJS.ErrnoException;
 
-		if (err instanceof CodexBinaryError || nodeErr?.code === 'ENOENT') {
+		if (nodeErr?.code === 'ENOENT') {
 			this.postToWebview(webview, {
 				type: 'appendMessage',
 				role: 'assistant',
@@ -399,7 +399,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 					type: 'command_execution',
 					command: '/bin/zsh -lc ls',
 					aggregated_output: '',
-					exit_code: null,
+					exit_code: undefined,
 					status: 'in_progress'
 				}
 			},
@@ -429,7 +429,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 					type: 'command_execution',
 					command: '/bin/zsh -lc "cat README.md"',
 					aggregated_output: '',
-					exit_code: null,
+					exit_code: undefined,
 					status: 'in_progress'
 				}
 			},
@@ -744,10 +744,6 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private formatFriendlyError(err: unknown): string {
-		if (err instanceof CodexBinaryError) {
-			return err.message;
-		}
-
 		if (err && typeof err === 'object' && Object.prototype.hasOwnProperty.call(err, 'message')) {
 			const nodeErr = err as NodeJS.ErrnoException;
 			if (nodeErr.code === 'ENOENT') {
