@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as cp from 'child_process';
 import { CodexBinaryError, CodexClient, CodexEvent } from './codexClient';
 import { summarizeCommand } from './commandSummary';
+import { AgentOverlayController, AgentOverlayMode, AgentOverlayPayload } from './agentOverlay';
 import {
 	isWebviewToHostMessage,
 	type HostToWebviewMessage,
@@ -24,10 +25,13 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 	private readonly codexClient: CodexClient;
 	private readonly readDecoration: vscode.TextEditorDecorationType;
 	private readonly readLabelDecoration: vscode.TextEditorDecorationType;
+	private readonly overlay: AgentOverlayController;
 	private busy = false;
 	private authStatus: AuthStatus = 'checking';
 	private lastCwd: string | undefined;
 	private lastCommandOutput: string | undefined;
+	private lastHighLevelOverlay: AgentOverlayPayload | undefined;
+	private specialCaseActive = false;
 	private readHighlightsByDoc = new Map<string, vscode.Range[]>();
 	private reasoningEffort: ReasoningEffortOption;
 
@@ -49,6 +53,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			},
 			rangeBehavior: vscode.DecorationRangeBehavior.OpenOpen,
 		});
+		this.overlay = new AgentOverlayController();
 	}
 
 	resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -158,6 +163,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
 		this.busy = true;
 		this.postToWebview(webview, { type: 'setBusy', busy: true });
+		void this.showHighLevelOverlay('Working', 'thinking', vscode.window.activeTextEditor?.document.uri);
 
 		// Echo the user's prompt into the log for context.
 		this.postToWebview(webview, {
@@ -184,11 +190,22 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		} finally {
 			this.busy = false;
 			this.postToWebview(webview, { type: 'setBusy', busy: false });
+			this.clearOverlay();
 		}
 	}
 
 	private forwardCodexEvent(webview: vscode.Webview, evt: CodexEvent): void {
 		this.clearReadHighlights(); // Always clear read highlights
+
+		// If a special-case label was active, drop back to the last high-level label
+		// as soon as the next non-special event arrives.
+		if (this.specialCaseActive && !this.isSpecialCaseEvent(evt)) {
+			this.restoreHighLevelOverlay();
+		}
+
+		if (evt.type === 'turn.completed') {
+			this.clearOverlay();
+		}
 
 		if (evt.type === 'item.completed' && evt.item?.type === 'agent_message') {
 			this.postToWebview(webview, {
@@ -241,8 +258,12 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 				text: enriched.find((c) => c.diff)?.diff ?? fallbackText,
 			});
 
-			// Auto-open the first changed file and select the hunk if we have a line.
 			const first = enriched[0];
+			const targetUri = first?.absPath ? vscode.Uri.file(first.absPath) : this.getActiveEditorUri();
+			const targetRange = first?.line ? { startLine: first.line } : undefined;
+			void this.showSpecialCaseOverlay(first ? `${first.kind === 'delete' ? 'Deleting' : 'Editing'} ${path.basename(first.path)}` : 'Editing files', 'editing', targetUri, targetRange);
+
+			// Auto-open the first changed file and select the hunk if we have a line.
 			if (first?.absPath) {
 				const startLine = typeof first.line === 'number' ? Math.max(0, first.line - 1) : 0;
 				void vscode.window.showTextDocument(vscode.Uri.file(first.absPath), {
@@ -255,6 +276,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
 		if (evt.type === 'item.completed' && evt.item?.type === 'reasoning') {
 			this.postToWebview(webview, { type: 'reasoningUpdate', text: evt.item.text ?? '' });
+			void this.showHighLevelOverlay(evt.item.text ?? 'Thinking…', 'thinking', this.getActiveEditorUri());
 			return;
 		}
 
@@ -292,6 +314,13 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 				targets,
 				parsed: parsedWithAbs,
 			});
+			// Avoid surfacing every low-level command as the overlay label.
+			// Only set it if we don't yet have a high-level marker for this turn.
+			if (!this.lastHighLevelOverlay) {
+				const firstPath = parsedWithAbs.find((p) => p.absPath)?.absPath;
+				const targetUri = firstPath ? vscode.Uri.file(firstPath) : this.getActiveEditorUri();
+				void this.showHighLevelOverlay(summary.summary || summary.displayCommand || 'Running command', 'executing', targetUri);
+			}
 		}
 	}
 
@@ -484,6 +513,10 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		editor.setDecorations(this.readDecoration, [range]);
 		editor.setDecorations(this.readLabelDecoration, [labelRange]);
 		editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+
+		const startOverlayLine = selection ? selection.start + 1 : startLine + 1;
+		const endOverlayLine = selection?.end !== undefined ? selection.end + 1 : undefined;
+		void this.showSpecialCaseOverlay(`Reading ${path.basename(target.fsPath)}`, 'reading', target, { startLine: startOverlayLine, endLine: endOverlayLine });
 	}
 
 	private clearReadHighlights(): void {
@@ -515,6 +548,62 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		if (webview) {
 			this.postReasoningState(webview);
 		}
+	}
+
+	private async showHighLevelOverlay(label: string, mode: AgentOverlayMode = 'thinking', targetUri?: vscode.Uri, targetRange?: { startLine: number; endLine?: number }): Promise<void> {
+		const normalized = this.normalizeOverlayLabel(label) || 'Thinking…';
+		this.lastHighLevelOverlay = {
+			label: normalized,
+			mode,
+			targetUri,
+			targetRange,
+		};
+		this.specialCaseActive = false;
+		await this.overlay.show(this.lastHighLevelOverlay);
+	}
+
+	private async showSpecialCaseOverlay(label: string, mode: AgentOverlayMode, targetUri?: vscode.Uri, targetRange?: { startLine: number; endLine?: number }): Promise<void> {
+		const normalized = this.normalizeOverlayLabel(label) || 'Working';
+		this.specialCaseActive = true;
+		await this.overlay.show({
+			label: normalized,
+			mode,
+			targetUri,
+			targetRange,
+		});
+	}
+
+	private restoreHighLevelOverlay(): void {
+		if (!this.lastHighLevelOverlay) {
+			this.specialCaseActive = false;
+			return;
+		}
+		this.specialCaseActive = false;
+		void this.overlay.show(this.lastHighLevelOverlay);
+	}
+
+	private clearOverlay(): void {
+		this.lastHighLevelOverlay = undefined;
+		this.specialCaseActive = false;
+		void this.overlay.clear();
+	}
+
+	private normalizeOverlayLabel(raw: string | undefined): string {
+		if (!raw) {
+			return '';
+		}
+		return raw
+			.replace(/[*_`~]+/g, ' ')
+			.replace(/\s+/g, ' ')
+			.trim();
+	}
+
+	private getActiveEditorUri(): vscode.Uri | undefined {
+		return vscode.window.activeTextEditor?.document.uri;
+	}
+
+	private isSpecialCaseEvent(evt: CodexEvent): boolean {
+		return (evt.type === 'item.completed' || evt.type === 'item.updated') && evt.item?.type === 'file_change';
 	}
 
 	private getHtmlForWebview(webview: vscode.Webview): string {

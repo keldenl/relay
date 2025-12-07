@@ -5,7 +5,7 @@
 
 import './media/editorgroupview.css';
 import { EditorGroupModel, IEditorOpenOptions, IGroupModelChangeEvent, ISerializedEditorGroupModel, isGroupEditorCloseEvent, isGroupEditorOpenEvent, isSerializedEditorGroupModel } from '../../../common/editor/editorGroupModel.js';
-import { GroupIdentifier, CloseDirection, IEditorCloseEvent, IEditorPane, SaveReason, IEditorPartOptionsChangeEvent, EditorsOrder, IVisibleEditorPane, EditorResourceAccessor, EditorInputCapabilities, IUntypedEditorInput, DEFAULT_EDITOR_ASSOCIATION, SideBySideEditor, EditorCloseContext, IEditorWillMoveEvent, IEditorWillOpenEvent, IMatchEditorOptions, GroupModelChangeKind, IActiveEditorChangeEvent, IFindEditorOptions, TEXT_DIFF_EDITOR_ID } from '../../../common/editor.js';
+import { GroupIdentifier, CloseDirection, IEditorCloseEvent, IEditorPane, SaveReason, IEditorPartOptionsChangeEvent, EditorsOrder, IVisibleEditorPane, EditorResourceAccessor, EditorInputCapabilities, IUntypedEditorInput, DEFAULT_EDITOR_ASSOCIATION, SideBySideEditor, EditorCloseContext, IEditorWillMoveEvent, IEditorWillOpenEvent, IMatchEditorOptions, GroupModelChangeKind, IActiveEditorChangeEvent, IFindEditorOptions, TEXT_DIFF_EDITOR_ID, ITextEditorPane, ITextDiffEditorPane } from '../../../common/editor.js';
 import { ActiveEditorGroupLockedContext, ActiveEditorDirtyContext, EditorGroupEditorsCountContext, ActiveEditorStickyContext, ActiveEditorPinnedContext, ActiveEditorLastInGroupContext, ActiveEditorFirstInGroupContext, ResourceContextKey, applyAvailableEditorIds, ActiveEditorAvailableEditorIdsContext, ActiveEditorCanSplitInGroupContext, SideBySideEditorActiveContext, TextCompareEditorVisibleContext, TextCompareEditorActiveContext, ActiveEditorContext, ActiveEditorReadonlyContext, ActiveEditorCanRevertContext, ActiveEditorCanToggleReadonlyContext, ActiveCompareEditorCanSwapContext, MultipleEditorsSelectedInGroupContext, TwoEditorsSelectedInGroupContext, SelectedEditorsInGroupFileOrUntitledResourceContextKey } from '../../../common/contextkeys.js';
 import { EditorInput } from '../../../common/editor/editorInput.js';
 import { SideBySideEditorInput } from '../../../common/editor/sideBySideEditorInput.js';
@@ -29,6 +29,8 @@ import { ITelemetryData, ITelemetryService } from '../../../../platform/telemetr
 import { DeferredPromise, Promises, RunOnceWorker } from '../../../../base/common/async.js';
 import { EventType as TouchEventType, GestureEvent } from '../../../../base/browser/touch.js';
 import { IEditorGroupsView, IEditorGroupView, fillActiveEditorViewState, EditorServiceImpl, IEditorGroupTitleHeight, IInternalEditorOpenOptions, IInternalMoveCopyOptions, IInternalEditorCloseOptions, IInternalEditorTitleControlOptions, IEditorPartsView, IEditorGroupViewOptions } from './editor.js';
+import { AgentEditorOverlay, AgentOverlayState } from './agentEditorOverlay.js';
+import { isCodeEditor, isDiffEditor, ICodeEditor } from '../../../../editor/browser/editorBrowser.js';
 import { ActionBar } from '../../../../base/browser/ui/actionbar/actionbar.js';
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
 import { SubmenuAction } from '../../../../base/common/actions.js';
@@ -129,6 +131,7 @@ export class EditorGroupView extends Themable implements IEditorGroupView {
 
 	private readonly editorContainer: HTMLElement;
 	private readonly editorPane: EditorPanes;
+	private readonly agentOverlay: AgentEditorOverlay;
 
 	private readonly disposedEditorsWorker = this._register(new RunOnceWorker<EditorInput>(editors => this.handleDisposedEditors(editors), 0));
 
@@ -218,6 +221,9 @@ export class EditorGroupView extends Themable implements IEditorGroupView {
 			this.editorContainer = $('.editor-container');
 			this.element.appendChild(this.editorContainer);
 
+			// Agent overlay (cursor + label)
+			this.agentOverlay = this._register(new AgentEditorOverlay(this.element));
+
 			// Editor pane
 			this.editorPane = this._register(this.scopedInstantiationService.createInstance(EditorPanes, this.element, this.editorContainer, this));
 			this._onDidChange.input = this.editorPane.onDidChangeSizeConstraints;
@@ -244,6 +250,10 @@ export class EditorGroupView extends Themable implements IEditorGroupView {
 
 		// Register Listeners
 		this.registerListeners();
+
+		// Keep overlay attached to the active text editor
+		this._register(this.onDidActiveEditorChange(() => this.agentOverlay.attachToEditor(this.getActiveCodeEditor())));
+		this.agentOverlay.attachToEditor(this.getActiveCodeEditor());
 	}
 
 	private handleGroupContextKeys(): void {
@@ -2195,6 +2205,29 @@ export class EditorGroupView extends Themable implements IEditorGroupView {
 
 	setBoundarySashes(sashes: IBoundarySashes): void {
 		this.editorPane.setBoundarySashes(sashes);
+	}
+
+	applyAgentOverlayState(state: AgentOverlayState | undefined): void {
+		this.agentOverlay.setState(state);
+	}
+
+	private getActiveCodeEditor(): ICodeEditor | undefined {
+		const pane = this.activeEditorPane;
+		if (!pane) {
+			return undefined;
+		}
+
+		const control = (pane as ITextEditorPane | ITextDiffEditorPane).getControl?.();
+
+		if (isCodeEditor(control)) {
+			return control;
+		}
+
+		if (isDiffEditor(control)) {
+			return control.getModifiedEditor();
+		}
+
+		return undefined;
 	}
 
 	toJSON(): ISerializedEditorGroupModel {

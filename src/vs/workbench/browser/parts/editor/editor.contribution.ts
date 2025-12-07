@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Registry } from '../../../../platform/registry/common/platform.js';
+import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { localize, localize2 } from '../../../../nls.js';
 import { IEditorPaneRegistry, EditorPaneDescriptor } from '../../editor.js';
 import { IEditorFactoryRegistry, EditorExtensions } from '../../../common/editor.js';
@@ -25,6 +26,7 @@ import { ChangeEncodingAction, ChangeEOLAction, ChangeLanguageAction, EditorStat
 import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
 import { MenuRegistry, MenuId, IMenuItem, registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
+import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { KeyMod, KeyCode } from '../../../../base/common/keyCodes.js';
 import {
 	CloseEditorsInOtherGroupsAction, CloseAllEditorsAction, MoveGroupLeftAction, MoveGroupRightAction, SplitEditorAction, JoinTwoGroupsAction, RevertAndCloseEditorAction,
@@ -73,6 +75,9 @@ import { ICommandAction } from '../../../../platform/action/common/action.js';
 import { EditorContextKeys } from '../../../../editor/common/editorContextKeys.js';
 import { getFontSnippets } from '../../../../base/browser/fonts.js';
 import { registerEditorFontConfigurations } from '../../../../editor/common/config/editorConfigurationSchema.js';
+import { IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
+import { URI } from '../../../../base/common/uri.js';
+import { EditorGroupView } from './editorGroupView.js';
 
 //#region Editor Registrations
 
@@ -1113,6 +1118,51 @@ MenuRegistry.appendMenuItem(MenuId.MenubarGoMenu, {
 	title: localize({ key: 'miSwitchGroup', comment: ['&& denotes a mnemonic'] }, "Switch &&Group"),
 	submenu: MenuId.MenubarSwitchGroupMenu,
 	order: 2
+});
+
+//#endregion
+
+//#region Codex agent overlay (internal)
+
+interface AgentOverlayStateDto {
+	label: string;
+	mode: 'thinking' | 'executing' | 'reading' | 'editing';
+	targetUri?: string;
+	targetRange?: {
+		startLine: number;
+		endLine?: number;
+	};
+}
+
+CommandsRegistry.registerCommand('_codex.agentOverlay.setState', (accessor: ServicesAccessor, dto: AgentOverlayStateDto | undefined) => {
+	if (!dto) {
+		return;
+	}
+
+	const groupsService = accessor.get(IEditorGroupsService);
+	const active = groupsService.activeGroup;
+	if (!active) {
+		return;
+	}
+
+	const state = {
+		label: dto.label ?? '',
+		mode: dto.mode ?? 'thinking',
+		targetUri: dto.targetUri ? URI.parse(dto.targetUri) : undefined,
+		targetRange: dto.targetRange
+	};
+
+	(active as EditorGroupView).applyAgentOverlayState(state);
+});
+
+CommandsRegistry.registerCommand('_codex.agentOverlay.clear', (accessor: ServicesAccessor) => {
+	const groupsService = accessor.get(IEditorGroupsService);
+	const active = groupsService.activeGroup;
+	if (!active) {
+		return;
+	}
+
+	(active as EditorGroupView).applyAgentOverlayState(undefined);
 });
 
 //#endregion
