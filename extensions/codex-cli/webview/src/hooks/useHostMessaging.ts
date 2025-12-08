@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { useEffect, useReducer } from 'react';
-import type { AgentMessage, AuthStatus, HostToWebviewMessage, ReasoningEffortOption, SessionListItem } from '@shared/messages';
+import type { AgentMessage, AuthStatus, CodexModelId, HostToWebviewMessage, ReasoningEffortOption, SessionListItem } from '@shared/messages';
 import vscode, { postMessage } from '../vscode';
 
 type State = {
@@ -13,6 +13,7 @@ type State = {
 	reasoning: string;
 	messages: AgentMessage[];
 	reasoningEffort: ReasoningEffortOption;
+	model: CodexModelId;
 	sessions: SessionListItem[];
 	activeSessionId?: string;
 };
@@ -24,6 +25,7 @@ type Action =
 	| { type: 'appendMessage'; message: AgentMessage }
 	| { type: 'clear' }
 	| { type: 'setReasoningEffort'; effort: ReasoningEffortOption }
+	| { type: 'setModel'; model: CodexModelId }
 	| { type: 'setSessionState'; sessions: SessionListItem[]; activeSessionId: string; messages: AgentMessage[] };
 
 const initialState: State = {
@@ -32,6 +34,7 @@ const initialState: State = {
 	reasoning: '',
 	messages: [],
 	reasoningEffort: 'medium',
+	model: 'gpt-5.1-codex-max',
 	sessions: [],
 };
 
@@ -50,6 +53,8 @@ function reducer(state: State, action: Action): State {
 			return { ...state, messages: [...state.messages, action.message] };
 		case 'setReasoningEffort':
 			return { ...state, reasoningEffort: action.effort };
+		case 'setModel':
+			return { ...state, model: action.model };
 		case 'clear':
 			return { ...state, messages: [], reasoning: '' };
 		case 'setSessionState':
@@ -102,6 +107,9 @@ function handleHostMessage(dispatch: React.Dispatch<Action>, message: HostToWebv
 		case 'reasoningState':
 			dispatch({ type: 'setReasoningEffort', effort: message.effort });
 			return;
+		case 'modelState':
+			dispatch({ type: 'setModel', model: message.model });
+			return;
 		case 'sessionState':
 			dispatch({
 				type: 'setSessionState',
@@ -148,13 +156,24 @@ export function useHostMessaging() {
 		postMessage({ type: 'setReasoningEffort', effort });
 	};
 
+	const setModel = (model: CodexModelId) => {
+		dispatch({ type: 'setModel', model });
+		postMessage({ type: 'setModel', model });
+	};
+
+	const setModelAndEffort = (model: CodexModelId, effort: ReasoningEffortOption) => {
+		dispatch({ type: 'setModel', model });
+		dispatch({ type: 'setReasoningEffort', effort });
+		postMessage({ type: 'setModelAndEffort', model, effort });
+	};
+
 	const newSession = (title?: string) => postMessage({ type: 'newSession', title });
 	const switchSession = (sessionId: string) => postMessage({ type: 'switchSession', sessionId });
 	const renameSession = (sessionId: string, title: string) => postMessage({ type: 'renameSession', sessionId, title });
 
 	return {
 		state,
-		handlers: { submitPrompt, login, requestStatus, setReasoningEffort, newSession, switchSession, renameSession },
+		handlers: { submitPrompt, login, requestStatus, setReasoningEffort, setModel, setModelAndEffort, newSession, switchSession, renameSession },
 		postMessage: vscode.postMessage,
 	};
 }

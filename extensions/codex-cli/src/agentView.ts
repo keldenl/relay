@@ -15,13 +15,15 @@ import {
 	type HostToWebviewMessage,
 	type WebviewToHostMessage,
 	type AuthStatus,
-	type ReasoningEffortOption
+	type ReasoningEffortOption,
+	type CodexModelId
 } from './shared/messages';
 import { SessionStore, type SessionSummary, type StoredSession } from './sessionStore';
 
 export class AgentViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewId = 'codexAgentView';
 	private static readonly reasoningStateKey = 'codex.reasoningEffort';
+	private static readonly modelStateKey = 'codex.model';
 
 	private readonly codexClient: CodexClient;
 	private readonly sessions: SessionStore;
@@ -36,12 +38,15 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 	private specialCaseActive = false;
 	private readHighlightsByDoc = new Map<string, vscode.Range[]>();
 	private reasoningEffort: ReasoningEffortOption;
+	private selectedModel: CodexModelId;
 	private activeSessionId: string | undefined;
+	private initializedFreshSession = false;
 
 	constructor(private readonly context: vscode.ExtensionContext) {
 		this.codexClient = new CodexClient(context);
 		this.sessions = new SessionStore(context);
 		this.reasoningEffort = this.getStoredReasoningEffort();
+		this.selectedModel = this.getStoredModel();
 		this.readDecoration = vscode.window.createTextEditorDecorationType({
 			backgroundColor: new vscode.ThemeColor('editor.selectionHighlightBackground'),
 			overviewRulerColor: new vscode.ThemeColor('editor.selectionHighlightBackground'),
@@ -73,8 +78,11 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
 		webview.html = this.getHtmlForWebview(webview);
 		this.postReasoningState(webview);
+		this.postModelState(webview);
 		void this.refreshAuthState(webviewView);
 		void this.pushSessionState(webviewView);
+		this.resetUiForSessionChange(webview);
+		void this.ensureFreshSessionOnLaunch(webviewView);
 
 		webview.onDidReceiveMessage((raw) => {
 			if (!isWebviewToHostMessage(raw)) {
@@ -95,6 +103,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			if (message.type === 'requestStatus') {
 				void this.refreshAuthState(webviewView);
 				this.postReasoningState(webview);
+				this.postModelState(webview);
 				void this.pushSessionState(webviewView);
 			}
 
@@ -119,6 +128,14 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
 			if (message.type === 'setReasoningEffort') {
 				void this.updateReasoningEffort(message.effort, webview);
+			}
+
+			if (message.type === 'setModel') {
+				void this.handleModelChange(message.model, webview);
+			}
+
+			if (message.type === 'setModelAndEffort') {
+				void this.handleModelAndEffortChange(message.model, message.effort, webview);
 			}
 
 			if (message.type === 'newSession') {
@@ -196,6 +213,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			const sessionId = activeSession.id;
 			await this.codexClient.runExec(trimmed, cwd, (evt) => this.forwardCodexEvent(webview, evt, sessionId), {
 				reasoningEffort: this.reasoningEffort,
+				model: this.selectedModel,
 				sessionId,
 				threadId: activeSession.threadId,
 				onThreadId: async (id) => {
@@ -422,8 +440,11 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			await this.sessions.setActiveSession(workspaceKey, active.id);
 		}
 		this.activeSessionId = active?.id;
+		this.selectedModel = active?.model ?? this.getStoredModel();
+		await this.context.globalState.update(AgentViewProvider.modelStateKey, this.selectedModel);
 		const freshState = await this.sessions.getState(workspaceKey);
 		await this.pushSessionStateFor(workspaceKey, webview, freshState);
+		this.postModelState(webview);
 		return active;
 	}
 
@@ -438,12 +459,17 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		if (active && (active.messages?.length ?? 0) === 0) {
 			// Already on a fresh session; no need to spawn another.
 			this.activeSessionId = active.id;
+			this.selectedModel = active.model ?? this.selectedModel;
 			await this.pushSessionStateFor(workspaceKey, webviewView.webview, state);
+			this.resetUiForSessionChange(webviewView.webview);
 			return;
 		}
-		const created = await this.sessions.createNewSession(workspaceKey, title);
+		const created = await this.sessions.createNewSession(workspaceKey, title, undefined, this.selectedModel);
 		this.activeSessionId = created.id;
+		this.selectedModel = created.model ?? this.selectedModel;
 		await this.pushSessionStateFor(workspaceKey, webviewView.webview);
+		this.postModelState(webviewView.webview);
+		this.resetUiForSessionChange(webviewView.webview);
 	}
 
 	private async handleSwitchSession(webviewView: vscode.WebviewView, sessionId: string): Promise<void> {
@@ -454,7 +480,12 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		const workspaceKey = this.sessions.workspaceKey(cwd);
 		await this.sessions.setActiveSession(workspaceKey, sessionId);
 		this.activeSessionId = sessionId;
+		const target = await this.sessions.getSession(workspaceKey, sessionId);
+		this.selectedModel = target?.model ?? this.getStoredModel();
+		await this.context.globalState.update(AgentViewProvider.modelStateKey, this.selectedModel);
 		await this.pushSessionStateFor(workspaceKey, webviewView.webview);
+		this.postModelState(webviewView.webview);
+		this.resetUiForSessionChange(webviewView.webview);
 	}
 
 	private async handleRenameSession(webviewView: vscode.WebviewView, sessionId: string, title: string): Promise<void> {
@@ -676,10 +707,22 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		return stored ?? 'medium';
 	}
 
+	private getStoredModel(): CodexModelId {
+		const stored = this.context.globalState.get<CodexModelId>(AgentViewProvider.modelStateKey);
+		return stored ?? 'gpt-5.1-codex-max';
+	}
+
 	private postReasoningState(webview: vscode.Webview): void {
 		this.postToWebview(webview, {
 			type: 'reasoningState',
 			effort: this.reasoningEffort,
+		});
+	}
+
+	private postModelState(webview: vscode.Webview): void {
+		this.postToWebview(webview, {
+			type: 'modelState',
+			model: this.selectedModel,
 		});
 	}
 
@@ -692,6 +735,42 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		if (webview) {
 			this.postReasoningState(webview);
 		}
+	}
+
+	private async updateModel(model: CodexModelId, webview?: vscode.Webview): Promise<void> {
+		if (!model || this.selectedModel === model) {
+			return;
+		}
+		this.selectedModel = model;
+		await this.context.globalState.update(AgentViewProvider.modelStateKey, model);
+		if (webview) {
+			this.postModelState(webview);
+		}
+	}
+
+	private async handleModelChange(model: CodexModelId, webview?: vscode.Webview): Promise<void> {
+		if (!model) {
+			return;
+		}
+		await this.updateModel(model, webview);
+		await this.persistSessionModel(model);
+	}
+
+	private async handleModelAndEffortChange(model: CodexModelId, effort: ReasoningEffortOption, webview?: vscode.Webview): Promise<void> {
+		await this.handleModelChange(model, webview);
+		await this.updateReasoningEffort(effort, webview);
+	}
+
+	private async persistSessionModel(model: CodexModelId): Promise<void> {
+		if (!this.activeSessionId) {
+			return;
+		}
+		const cwd = this.lastCwd ?? this.getWorkspaceRoot();
+		if (!cwd) {
+			return;
+		}
+		const workspaceKey = this.sessions.workspaceKey(cwd);
+		await this.sessions.updateModel(workspaceKey, this.activeSessionId, model);
 	}
 
 	private async showHighLevelOverlay(label: string, mode: AgentOverlayMode = 'thinking', targetUri?: vscode.Uri, targetRange?: { startLine: number; endLine?: number }): Promise<void> {
@@ -730,6 +809,71 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		this.lastHighLevelOverlay = undefined;
 		this.specialCaseActive = false;
 		void this.overlay.clear();
+	}
+
+	private resetUiForSessionChange(webview: vscode.Webview): void {
+		this.clearOverlay();
+		this.clearReadHighlights();
+		this.postToWebview(webview, { type: 'reasoningUpdate', text: undefined });
+	}
+
+	private async ensureFreshSessionOnLaunch(webviewView: vscode.WebviewView): Promise<void> {
+		if (this.initializedFreshSession) {
+			return;
+		}
+		this.initializedFreshSession = true;
+
+		const cwd = this.getWorkspaceRoot();
+		if (!cwd) {
+			return;
+		}
+		const workspaceKey = this.sessions.workspaceKey(cwd);
+		const state = await this.sessions.getState(workspaceKey);
+		const active = state.sessions.find((s) => s.id === state.activeId) ?? state.sessions[0];
+		const hasMessages = (active?.messages?.length ?? 0) > 0;
+
+		if (!active) {
+			// Extremely unlikely; fall back to creating one.
+			const created = await this.sessions.createNewSession(workspaceKey, undefined, undefined, this.selectedModel);
+			this.activeSessionId = created.id;
+			this.selectedModel = created.model ?? this.selectedModel;
+			await this.sessions.setActiveSession(workspaceKey, created.id);
+			await this.context.globalState.update(AgentViewProvider.modelStateKey, this.selectedModel);
+			await this.pushSessionStateFor(workspaceKey, webviewView.webview);
+			this.postModelState(webviewView.webview);
+			this.resetUiForSessionChange(webviewView.webview);
+			return;
+		}
+
+		if (!hasMessages) {
+			// Already on a fresh/empty session: just clean UI.
+			this.activeSessionId = active.id;
+			this.resetUiForSessionChange(webviewView.webview);
+			return;
+		}
+
+		// Active session has history; try to reuse an existing empty session before creating another.
+		const reusableEmpty = state.sessions.find((s) => (s.messages?.length ?? 0) === 0);
+		if (reusableEmpty) {
+			await this.sessions.setActiveSession(workspaceKey, reusableEmpty.id);
+			this.activeSessionId = reusableEmpty.id;
+			this.selectedModel = reusableEmpty.model ?? this.selectedModel;
+			await this.context.globalState.update(AgentViewProvider.modelStateKey, this.selectedModel);
+			await this.pushSessionStateFor(workspaceKey, webviewView.webview);
+			this.postModelState(webviewView.webview);
+			this.resetUiForSessionChange(webviewView.webview);
+			return;
+		}
+
+		// No empty session exists; create a fresh one.
+		const created = await this.sessions.createNewSession(workspaceKey, undefined, undefined, this.selectedModel);
+		this.activeSessionId = created.id;
+		this.selectedModel = created.model ?? this.selectedModel;
+		await this.sessions.setActiveSession(workspaceKey, created.id);
+		await this.context.globalState.update(AgentViewProvider.modelStateKey, this.selectedModel);
+		await this.pushSessionStateFor(workspaceKey, webviewView.webview);
+		this.postModelState(webviewView.webview);
+		this.resetUiForSessionChange(webviewView.webview);
 	}
 
 	private normalizeOverlayLabel(raw: string | undefined): string {
