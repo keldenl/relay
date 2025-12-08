@@ -7,7 +7,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as cp from 'child_process';
-import { CodexBinaryError, CodexClient, CodexEvent } from './codexClient';
+import { CodexClient, CodexEvent } from './codexClient';
 import { summarizeCommand } from './commandSummary';
 import { AgentOverlayController, AgentOverlayMode, AgentOverlayPayload } from './agentOverlay';
 import {
@@ -17,12 +17,14 @@ import {
 	type AuthStatus,
 	type ReasoningEffortOption
 } from './shared/messages';
+import { SessionStore, type SessionSummary, type StoredSession } from './sessionStore';
 
 export class AgentViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewId = 'codexAgentView';
 	private static readonly reasoningStateKey = 'codex.reasoningEffort';
 
 	private readonly codexClient: CodexClient;
+	private readonly sessions: SessionStore;
 	private readonly readDecoration: vscode.TextEditorDecorationType;
 	private readonly readLabelDecoration: vscode.TextEditorDecorationType;
 	private readonly overlay: AgentOverlayController;
@@ -34,9 +36,11 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 	private specialCaseActive = false;
 	private readHighlightsByDoc = new Map<string, vscode.Range[]>();
 	private reasoningEffort: ReasoningEffortOption;
+	private activeSessionId: string | undefined;
 
 	constructor(private readonly context: vscode.ExtensionContext) {
 		this.codexClient = new CodexClient(context);
+		this.sessions = new SessionStore(context);
 		this.reasoningEffort = this.getStoredReasoningEffort();
 		this.readDecoration = vscode.window.createTextEditorDecorationType({
 			backgroundColor: new vscode.ThemeColor('editor.selectionHighlightBackground'),
@@ -70,6 +74,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		webview.html = this.getHtmlForWebview(webview);
 		this.postReasoningState(webview);
 		void this.refreshAuthState(webviewView);
+		void this.pushSessionState(webviewView);
 
 		webview.onDidReceiveMessage((raw) => {
 			if (!isWebviewToHostMessage(raw)) {
@@ -90,6 +95,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			if (message.type === 'requestStatus') {
 				void this.refreshAuthState(webviewView);
 				this.postReasoningState(webview);
+				void this.pushSessionState(webviewView);
 			}
 
 			if (message.type === 'openPath') {
@@ -113,6 +119,18 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
 			if (message.type === 'setReasoningEffort') {
 				void this.updateReasoningEffort(message.effort, webview);
+			}
+
+			if (message.type === 'newSession') {
+				void this.handleNewSession(webviewView, message.title);
+			}
+
+			if (message.type === 'switchSession') {
+				void this.handleSwitchSession(webviewView, message.sessionId);
+			}
+
+			if (message.type === 'renameSession') {
+				void this.handleRenameSession(webviewView, message.sessionId, message.title);
 			}
 		});
 
@@ -148,8 +166,8 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			return;
 		}
 
-		const workspaceFolders = vscode.workspace.workspaceFolders;
-		if (!workspaceFolders || workspaceFolders.length === 0) {
+		const cwd = this.getWorkspaceRoot();
+		if (!cwd) {
 			this.postToWebview(webview, {
 				type: 'appendMessage',
 				role: 'system',
@@ -158,8 +176,8 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			return;
 		}
 
-		const cwd = workspaceFolders[0].uri.fsPath;
 		this.lastCwd = cwd;
+		const activeSession = await this.ensureActiveSession(cwd, webview);
 
 		this.busy = true;
 		this.postToWebview(webview, { type: 'setBusy', busy: true });
@@ -170,12 +188,19 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 			type: 'appendMessage',
 			role: 'user',
 			text: trimmed,
+			sessionId: activeSession.id,
 		});
 
 		try {
 			// await this.simulateStream(webview); // Comment this in for simluation
-			await this.codexClient.runExec(trimmed, cwd, (evt) => this.forwardCodexEvent(webview, evt), {
+			const sessionId = activeSession.id;
+			await this.codexClient.runExec(trimmed, cwd, (evt) => this.forwardCodexEvent(webview, evt, sessionId), {
 				reasoningEffort: this.reasoningEffort,
+				sessionId,
+				threadId: activeSession.threadId,
+				onThreadId: async (id) => {
+					await this.sessions.updateThreadId(this.sessions.workspaceKey(cwd), sessionId, id);
+				},
 			});
 
 		} catch (err) {
@@ -194,7 +219,8 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
-	private forwardCodexEvent(webview: vscode.Webview, evt: CodexEvent): void {
+	private forwardCodexEvent(webview: vscode.Webview, evt: CodexEvent, sessionId?: string): void {
+		const sid = sessionId ?? this.activeSessionId;
 		this.clearReadHighlights(); // Always clear read highlights
 
 		// If a special-case label was active, drop back to the last high-level label
@@ -212,6 +238,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 				type: 'appendMessage',
 				role: 'assistant',
 				text: evt.item.text ?? '',
+				sessionId: sid,
 			});
 			this.postToWebview(webview, { type: 'reasoningUpdate', text: undefined });
 			return;
@@ -256,6 +283,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 				friendlySummary: summary || 'Applied file changes',
 				fileChanges: enriched,
 				text: enriched.find((c) => c.diff)?.diff ?? fallbackText,
+				sessionId: sid,
 			});
 
 			const first = enriched[0];
@@ -313,6 +341,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 				friendlySummary: summary.summary,
 				targets,
 				parsed: parsedWithAbs,
+				sessionId: sid,
 			});
 			// Avoid surfacing every low-level command as the overlay label.
 			// Only set it if we don't yet have a high-level marker for this turn.
@@ -327,7 +356,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 	private async handleRunError(webview: vscode.Webview, err: unknown): Promise<boolean> {
 		const nodeErr = err as NodeJS.ErrnoException;
 
-		if (err instanceof CodexBinaryError || nodeErr?.code === 'ENOENT') {
+		if (nodeErr?.code === 'ENOENT') {
 			this.postToWebview(webview, {
 				type: 'appendMessage',
 				role: 'assistant',
@@ -374,6 +403,96 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
+	private getWorkspaceRoot(): string | undefined {
+		const workspaceFolders = vscode.workspace.workspaceFolders;
+		if (!workspaceFolders || workspaceFolders.length === 0) {
+			return undefined;
+		}
+		return workspaceFolders[0].uri.fsPath;
+	}
+
+	private async ensureActiveSession(cwd: string, webview: vscode.Webview): Promise<StoredSession> {
+		const workspaceKey = this.sessions.workspaceKey(cwd);
+		const state = await this.sessions.getState(workspaceKey);
+		let active = state.sessions.find((s) => s.id === state.activeId) ?? state.sessions[0] ?? (await this.sessions.ensureState(workspaceKey)).sessions[0];
+		if (!active) {
+			active = await this.sessions.createNewSession(workspaceKey);
+		}
+		if (!state.activeId && active) {
+			await this.sessions.setActiveSession(workspaceKey, active.id);
+		}
+		this.activeSessionId = active?.id;
+		const freshState = await this.sessions.getState(workspaceKey);
+		await this.pushSessionStateFor(workspaceKey, webview, freshState);
+		return active;
+	}
+
+	private async handleNewSession(webviewView: vscode.WebviewView, title?: string): Promise<void> {
+		const cwd = this.getWorkspaceRoot();
+		if (!cwd) {
+			return;
+		}
+		const workspaceKey = this.sessions.workspaceKey(cwd);
+		const state = await this.sessions.getState(workspaceKey);
+		const active = state.sessions.find((s) => s.id === state.activeId);
+		if (active && (active.messages?.length ?? 0) === 0) {
+			// Already on a fresh session; no need to spawn another.
+			this.activeSessionId = active.id;
+			await this.pushSessionStateFor(workspaceKey, webviewView.webview, state);
+			return;
+		}
+		const created = await this.sessions.createNewSession(workspaceKey, title);
+		this.activeSessionId = created.id;
+		await this.pushSessionStateFor(workspaceKey, webviewView.webview);
+	}
+
+	private async handleSwitchSession(webviewView: vscode.WebviewView, sessionId: string): Promise<void> {
+		const cwd = this.getWorkspaceRoot();
+		if (!cwd) {
+			return;
+		}
+		const workspaceKey = this.sessions.workspaceKey(cwd);
+		await this.sessions.setActiveSession(workspaceKey, sessionId);
+		this.activeSessionId = sessionId;
+		await this.pushSessionStateFor(workspaceKey, webviewView.webview);
+	}
+
+	private async handleRenameSession(webviewView: vscode.WebviewView, sessionId: string, title: string): Promise<void> {
+		const cwd = this.getWorkspaceRoot();
+		if (!cwd) {
+			return;
+		}
+		const workspaceKey = this.sessions.workspaceKey(cwd);
+		await this.sessions.renameSession(workspaceKey, sessionId, title);
+		await this.pushSessionStateFor(workspaceKey, webviewView.webview);
+	}
+
+	private async pushSessionState(webviewView: vscode.WebviewView): Promise<void> {
+		const cwd = this.getWorkspaceRoot();
+		if (!cwd) {
+			return;
+		}
+		const workspaceKey = this.sessions.workspaceKey(cwd);
+		await this.pushSessionStateFor(workspaceKey, webviewView.webview);
+	}
+
+	private async pushSessionStateFor(workspaceKey: string, webview: vscode.Webview, existingState?: { sessions: StoredSession[]; activeId?: string }): Promise<void> {
+		const state = existingState ?? await this.sessions.getState(workspaceKey);
+		const active = state.sessions.find((s) => s.id === state.activeId) ?? state.sessions[0];
+		if (!active) {
+			return;
+		}
+		this.activeSessionId = active.id;
+		const summaries: SessionSummary[] = this.sessions.getSummaries(state);
+		const message: HostToWebviewMessage = {
+			type: 'sessionState',
+			activeSessionId: active.id,
+			sessions: summaries,
+			messages: active.messages ?? [],
+		};
+		this.postToWebview(webview, message);
+	}
+
 	// @ts-ignore kept unused intentionally for debugging stream rendering
 	private async simulateStream(webview: vscode.Webview): Promise<void> {
 		const fakeEvents: CodexEvent[] = [
@@ -399,7 +518,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 					type: 'command_execution',
 					command: '/bin/zsh -lc ls',
 					aggregated_output: '',
-					exit_code: null,
+					exit_code: undefined,
 					status: 'in_progress'
 				}
 			},
@@ -429,7 +548,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 					type: 'command_execution',
 					command: '/bin/zsh -lc "cat README.md"',
 					aggregated_output: '',
-					exit_code: null,
+					exit_code: undefined,
 					status: 'in_progress'
 				}
 			},
@@ -485,7 +604,32 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private postToWebview(webview: vscode.Webview, message: HostToWebviewMessage): void {
-		webview.postMessage(message).then(undefined, console.error);
+		const enriched = this.enrichMessage(message);
+		webview.postMessage(enriched).then(undefined, console.error);
+		void this.persistIfNeeded(enriched);
+	}
+
+	private enrichMessage(message: HostToWebviewMessage): HostToWebviewMessage {
+		if (message.type === 'appendMessage' && !message.sessionId && this.activeSessionId) {
+			return { ...message, sessionId: this.activeSessionId };
+		}
+		return message;
+	}
+
+	private async persistIfNeeded(message: HostToWebviewMessage): Promise<void> {
+		if (message.type !== 'appendMessage') {
+			return;
+		}
+		const sessionId = message.sessionId ?? this.activeSessionId;
+		if (!sessionId) {
+			return;
+		}
+		const cwd = this.lastCwd ?? this.getWorkspaceRoot();
+		if (!cwd) {
+			return;
+		}
+		const workspaceKey = this.sessions.workspaceKey(cwd);
+		await this.sessions.recordMessage(workspaceKey, sessionId, message);
 	}
 
 	private async openFileWithHighlight(target: vscode.Uri, selection?: { start: number; end?: number }): Promise<void> {
@@ -744,10 +888,6 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private formatFriendlyError(err: unknown): string {
-		if (err instanceof CodexBinaryError) {
-			return err.message;
-		}
-
 		if (err && typeof err === 'object' && Object.prototype.hasOwnProperty.call(err, 'message')) {
 			const nodeErr = err as NodeJS.ErrnoException;
 			if (nodeErr.code === 'ENOENT') {

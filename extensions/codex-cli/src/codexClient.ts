@@ -5,22 +5,14 @@
 
 import * as cp from 'child_process';
 import * as fs from 'fs';
-import * as readline from 'readline';
+import * as path from 'path';
 import * as vscode from 'vscode';
+import type { Codex, Thread, ThreadEvent, ModelReasoningEffort, ThreadOptions } from '@openai/codex-sdk';
+type CodexConstructor = typeof import('@openai/codex-sdk').Codex;
 import { getBundledCodexPath } from './paths';
 import type { ReasoningEffortOption } from './shared/messages';
 
-export class CodexBinaryError extends Error {
-	constructor(message: string, public readonly binaryPath: string) {
-		super(message);
-		this.name = 'CodexBinaryError';
-	}
-}
-
-export interface CodexEvent {
-	type: string;
-	[key: string]: any;
-}
+export type CodexEvent = ThreadEvent;
 
 export type LoginMode = 'chatgpt' | 'apiKey';
 
@@ -30,97 +22,46 @@ export interface LoginStatusResult {
 	raw: string;
 }
 
-export class CodexClient {
-	constructor(private readonly context: vscode.ExtensionContext) { }
+type ThreadRecord = {
+	thread: Thread;
+	reasoningEffort?: ModelReasoningEffort;
+};
 
-	private resolveUsableCodexPath(): string {
-		const codexPath = getBundledCodexPath(this.context);
-		ensureBinaryUsable(codexPath);
-		return codexPath;
+export class CodexClient {
+	private codexCtorPromise: Promise<CodexConstructor> | undefined;
+	private codexInstance: Codex | undefined;
+	private readonly threads = new Map<string, ThreadRecord>();
+
+	constructor(private readonly context: vscode.ExtensionContext) {
 	}
 
-	runExec(
+	async runExec(
 		prompt: string,
 		cwd: string,
 		onEvent: (evt: CodexEvent) => void,
-		options?: { reasoningEffort?: ReasoningEffortOption }
+		options?: { reasoningEffort?: ReasoningEffortOption; sessionId?: string; threadId?: string; onThreadId?: (id: string) => void }
 	): Promise<void> {
-		return new Promise((resolve, reject) => {
-			let codexPath: string;
-			try {
-				codexPath = this.resolveUsableCodexPath();
-			} catch (err) {
-				return reject(err);
+		const thread = await this.getOrCreateThread(cwd, options?.sessionId, options?.threadId, options?.reasoningEffort);
+		const { events } = await thread.runStreamed(prompt);
+
+		for await (const evt of events) {
+			onEvent(evt);
+			if (evt.type === 'thread.started' && thread.id) {
+				options?.onThreadId?.(thread.id);
 			}
+		}
 
-			const args = [
-				'exec',
-				'--json',
-				'--color=never',
-				'--sandbox',
-				'workspace-write', // Give workspace write access
-				'--cd',
-				cwd,
-				prompt
-			];
-
-			const effort = options?.reasoningEffort;
-			if (effort) {
-				args.splice(args.length - 1, 0, '--config', `model_reasoning_effort="${effort}"`);
-			}
-
-			const child = cp.spawn(codexPath, args, {
-				cwd,
-				stdio: ['ignore', 'pipe', 'pipe']
-			});
-
-			const rl = readline.createInterface({
-				input: child.stdout,
-				crlfDelay: Infinity
-			});
-
-			rl.on('line', (line: string) => {
-				const trimmed = line.trim();
-				if (!trimmed) {
-					return;
-				}
-
-				try {
-					const evt = JSON.parse(trimmed) as CodexEvent;
-					onEvent(evt);
-				} catch (e) {
-					console.error('Failed to parse Codex JSON line:', trimmed, e);
-				}
-			});
-
-			child.stderr.on('data', (buf: Buffer) => {
-				console.error('Codex stderr:', buf.toString());
-			});
-
-			child.on('error', (err: Error) => {
-				reject(err);
-			});
-
-			child.on('exit', (code: number | null) => {
-				if (code === 0) {
-					resolve();
-				} else {
-					reject(new Error(`Codex exited with code ${code}`));
-				}
-			});
-		});
+		if (thread.id) {
+			options?.onThreadId?.(thread.id);
+		}
 	}
 
 	checkLoginStatus(): Promise<LoginStatusResult> {
 		return new Promise((resolve, reject) => {
-			let codexPath: string;
-			try {
-				codexPath = this.resolveUsableCodexPath();
-			} catch (err) {
-				return reject(err);
-			}
+			const codexPath = this.resolvePreferredCodexPath();
+			const binary = codexPath ?? 'codex';
 
-			const child = cp.spawn(codexPath, ['login', 'status'], {
+			const child = cp.spawn(binary, ['login', 'status'], {
 				stdio: ['ignore', 'pipe', 'pipe']
 			});
 
@@ -153,14 +94,10 @@ export class CodexClient {
 
 	runLogin(onOutput?: (text: string) => void): Promise<void> {
 		return new Promise((resolve, reject) => {
-			let codexPath: string;
-			try {
-				codexPath = this.resolveUsableCodexPath();
-			} catch (err) {
-				return reject(err);
-			}
+			const codexPath = this.resolvePreferredCodexPath();
+			const binary = codexPath ?? 'codex';
 
-			const child = cp.spawn(codexPath, ['login'], {
+			const child = cp.spawn(binary, ['login'], {
 				stdio: ['ignore', 'pipe', 'pipe']
 			});
 
@@ -185,28 +122,84 @@ export class CodexClient {
 			});
 		});
 	}
-}
 
-function ensureBinaryUsable(codexPath: string): void {
-	if (!fs.existsSync(codexPath)) {
-		throw new CodexBinaryError(`Bundled Codex CLI not found. Please place the Codex CLI binary at: ${codexPath} and mark it executable (chmod +x).`, codexPath);
-	}
+	private async getOrCreateThread(cwd: string, sessionId: string | undefined, storedThreadId: string | undefined, effort?: ReasoningEffortOption): Promise<Thread> {
+		const key = sessionId ?? this.workspaceKey(cwd);
+		const desiredEffort = this.mapReasoningEffort(effort);
 
-	const stat = fs.statSync(codexPath);
-	if (!stat.isFile()) {
-		throw new CodexBinaryError(`Bundled Codex CLI not found. Please place the Codex CLI binary at: ${codexPath} and mark it executable (chmod +x).`, codexPath);
-	}
-
-	// Guard against obvious placeholders: empty files or non-executable bits on POSIX.
-	if (stat.size === 0) {
-		throw new CodexBinaryError(`Bundled Codex CLI looks like a placeholder (zero bytes). Replace it with the real binary at: ${codexPath} and mark it executable (chmod +x).`, codexPath);
-	}
-
-	if (process.platform !== 'win32') {
-		try {
-			fs.accessSync(codexPath, fs.constants.X_OK);
-		} catch {
-			throw new CodexBinaryError(`Bundled Codex CLI is not executable. Please run: chmod +x "${codexPath}".`, codexPath);
+		const existing = this.threads.get(key);
+		if (existing && existing.reasoningEffort === desiredEffort) {
+			return existing.thread;
 		}
+
+		const threadOptions: ThreadOptions = {
+			workingDirectory: cwd,
+			sandboxMode: 'workspace-write',
+			skipGitRepoCheck: true,
+			modelReasoningEffort: desiredEffort,
+		};
+
+		const codex = await this.getCodex();
+		let thread: Thread;
+		if (storedThreadId) {
+			try {
+				thread = codex.resumeThread(storedThreadId, threadOptions);
+			} catch {
+				thread = codex.startThread(threadOptions);
+			}
+		} else {
+			thread = codex.startThread(threadOptions);
+		}
+
+		this.threads.set(key, { thread, reasoningEffort: desiredEffort });
+		return thread;
+	}
+
+	private mapReasoningEffort(option?: ReasoningEffortOption): ModelReasoningEffort | undefined {
+		if (!option) {
+			return undefined;
+		}
+		if (option === 'xhigh') {
+			return 'high';
+		}
+		return option as ModelReasoningEffort;
+	}
+
+	private workspaceKey(cwd: string): string {
+		return path.resolve(cwd);
+	}
+
+	private resolvePreferredCodexPath(): string | undefined {
+		try {
+			const bundled = getBundledCodexPath(this.context);
+			if (bundled && fs.existsSync(bundled)) {
+				return bundled;
+			}
+		} catch {
+			// Unsupported platform or missing path; fall back to SDK default.
+		}
+		return undefined;
+	}
+
+	private buildCodexOptions(): { codexPathOverride?: string } {
+		const maybePath = this.resolvePreferredCodexPath();
+		return maybePath ? { codexPathOverride: maybePath } : {};
+	}
+
+	private async loadSdk(): Promise<CodexConstructor> {
+		if (!this.codexCtorPromise) {
+			const dynamicImport = new Function('specifier', 'return import(specifier);') as (s: string) => Promise<{ Codex: CodexConstructor }>;
+			this.codexCtorPromise = dynamicImport('@openai/codex-sdk').then((mod) => mod.Codex);
+		}
+		return this.codexCtorPromise;
+	}
+
+	private async getCodex(): Promise<Codex> {
+		if (this.codexInstance) {
+			return this.codexInstance;
+		}
+		const Codex = await this.loadSdk();
+		this.codexInstance = new Codex(this.buildCodexOptions());
+		return this.codexInstance;
 	}
 }

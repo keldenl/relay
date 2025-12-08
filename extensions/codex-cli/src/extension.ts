@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
-import { CodexBinaryError, CodexClient } from './codexClient';
+import { CodexClient } from './codexClient';
 import { AgentViewProvider } from './agentView';
 
 const output = vscode.window.createOutputChannel('Codex');
@@ -68,10 +68,6 @@ export function deactivate(): void {
 }
 
 function formatFriendlyError(err: unknown): string {
-	if (err instanceof CodexBinaryError) {
-		return err.message;
-	}
-
 	if (err && typeof err === 'object' && Object.prototype.hasOwnProperty.call(err, 'message')) {
 		const nodeErr = err as NodeJS.ErrnoException;
 		if (nodeErr.code === 'ENOENT') {

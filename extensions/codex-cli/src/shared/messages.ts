@@ -31,6 +31,7 @@ export interface FileChangePreview {
 
 export interface AgentMessage {
 	role?: AgentMessageRole;
+	sessionId?: string;
 	text?: string;
 	command?: string;
 	friendlyTitle?: string;
@@ -40,20 +41,31 @@ export interface AgentMessage {
 	fileChanges?: FileChangePreview[];
 }
 
+export interface SessionListItem {
+	id: string;
+	title: string;
+	createdAt?: number;
+	updatedAt?: number;
+}
+
 export type HostToWebviewMessage =
 	| ({ type: 'appendMessage' } & AgentMessage)
 	| { type: 'clearMessages' }
 	| { type: 'setBusy'; busy?: boolean }
 	| { type: 'reasoningUpdate'; text?: string }
 	| { type: 'authState'; status: AuthStatus; detail?: string }
-	| { type: 'reasoningState'; effort: ReasoningEffortOption };
+	| { type: 'reasoningState'; effort: ReasoningEffortOption }
+	| { type: 'sessionState'; activeSessionId: string; sessions: SessionListItem[]; messages: AgentMessage[] };
 
 export type WebviewToHostMessage =
 	| { type: 'submitPrompt'; prompt: string }
 	| { type: 'requestLogin' }
 	| { type: 'requestStatus' }
 	| { type: 'setReasoningEffort'; effort: ReasoningEffortOption }
-	| { type: 'openPath'; path: string; isDir?: boolean; selection?: { start: number; end?: number } };
+	| { type: 'openPath'; path: string; isDir?: boolean; selection?: { start: number; end?: number } }
+	| { type: 'newSession'; title?: string }
+	| { type: 'switchSession'; sessionId: string }
+	| { type: 'renameSession'; sessionId: string; title: string };
 
 export function isWebviewToHostMessage(value: unknown): value is WebviewToHostMessage {
 	if (!value || typeof value !== 'object') {
@@ -75,6 +87,15 @@ export function isWebviewToHostMessage(value: unknown): value is WebviewToHostMe
 	}
 	if (msg.type === 'openPath') {
 		return typeof msg.path === 'string';
+	}
+	if (msg.type === 'newSession') {
+		return true;
+	}
+	if (msg.type === 'switchSession') {
+		return typeof msg.sessionId === 'string';
+	}
+	if (msg.type === 'renameSession') {
+		return typeof msg.sessionId === 'string' && typeof msg.title === 'string';
 	}
 	return false;
 }

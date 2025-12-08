@@ -14,8 +14,10 @@ any code until the user tells you that the plan is acceptable.
 
 If the user specifically asks for a spec, make sure that a spec exists for the task before
 proceeding with detailed planning. If no spec exists for the feature already, create a new
-one. Do not do extensive planning or research first. Instead, create a basic spec template
-with placeholders.
+one. Before presenting the spec, do thoughtful research: search the codebase for relevant
+files, use repo-grounded research prompts, and consult the web when helpful to answer open
+questions yourself. Incorporate what you learn to refine the spec; only ask the user for
+clarifications that remain after this research. Refer to .agent/prompts/thoughtful.md and .agent/prompts/repo-grounded-research.md before proceeding. Truths written in the spec should have 95% confidence, and if not, require you to continue doing research until you are.
 
 Do not create a spec if the user doesn't ask for one.
 
@@ -37,9 +39,8 @@ Use the following rules for specs:
    each section and be concise.
 - Requirements should be listed as declarative statements that use RFC 2119 modal verbs
    (MUST, SHOULD, MAY) to express normative strength.
-- For the initial spec, do not do extensive code exploration prior to generating the spec.
-- When creating a new spec, questions for the user can be added to the bottom of the file in a
-   section named "Open Questions".
+- Resolve as many questions as possible through research before drafting. Only include
+   "Open Questions" that could not be answered after investigating the repo and web sources.
 
 After creating the spec, ask the user to review it. Proceed with implementing the spec only once
 the user confirms that it is complete and correct.
@@ -51,3 +52,5 @@ the user confirms that it is complete and correct.
 - Font for overlay text relies on `var(--vscode-font-family, var(--monaco-monospace-font, system-ui))` to avoid fallback to Times.
 - Codex CLI webview runner: see `extensions/codex-cli/src/agentView.ts`; simulation mode currently enabled (real exec commented).
 - Repo is a VS Code fork branded "Relay" aimed at non-coders; main upstream docs remain in `README-VSCODE.md`.
+- Codex extension depends on `@openai/codex-sdk`; `codexClient.ts` instantiates the SDK, reuses per-workspace threads (stored in `globalState`), and maps reasoning effort; CLI auth shells to `codex login/status`, preferring a bundled binary if present.
+- Hygiene gotchas: new files need MIT header; curly braces required on single-line conditionals; run `npm run precommit` to satisfy formatting.
