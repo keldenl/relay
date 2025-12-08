@@ -16,12 +16,13 @@ export default function App(): JSX.Element {
 	const listRef = useRef<HTMLDivElement | null>(null);
 
 	const { state, handlers, postMessage } = useHostMessaging();
-	const { auth, busy, reasoning, messages, reasoningEffort } = state;
+	const { auth, busy, reasoning, messages, reasoningEffort, sessions, activeSessionId } = state;
 
 	useAutoOpen(messages, postMessage);
 	useAutoScroll(listRef, [messages, reasoning, busy]);
 
 	const showAgent = auth.status === 'loggedIn';
+	const activeSessionTitle = sessions.find((s) => s.id === activeSessionId)?.title ?? 'Chat';
 
 	const onSubmit = useMemo(
 		() => (event?: React.FormEvent) => {
@@ -56,6 +57,11 @@ export default function App(): JSX.Element {
 				listRef={listRef}
 				reasoningEffort={reasoningEffort}
 				onReasoningEffortChange={handlers.setReasoningEffort}
+				sessionTitle={activeSessionTitle}
+				sessions={sessions}
+				activeSessionId={activeSessionId}
+				onNewSession={handlers.newSession}
+				onSwitchSession={handlers.switchSession}
 			/>
 		</div>
 	);

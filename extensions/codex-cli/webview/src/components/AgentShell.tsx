@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import React from 'react';
-import type { AgentMessage, ReasoningEffortOption } from '@shared/messages';
+import type { AgentMessage, ReasoningEffortOption, SessionListItem } from '@shared/messages';
 import MessageList from './MessageList';
 import TopBar from './TopBar';
 import { ArrowUp } from 'lucide-react';
@@ -19,6 +19,11 @@ interface Props {
 	listRef: React.RefObject<HTMLDivElement>;
 	reasoningEffort: ReasoningEffortOption;
 	onReasoningEffortChange: (effort: ReasoningEffortOption) => void;
+	sessionTitle: string;
+	sessions: SessionListItem[];
+	activeSessionId?: string;
+	onNewSession: (title?: string) => void;
+	onSwitchSession: (sessionId: string) => void;
 }
 
 export default function AgentShell({
@@ -31,12 +36,25 @@ export default function AgentShell({
 	listRef,
 	reasoningEffort,
 	onReasoningEffortChange,
+	sessionTitle,
+	sessions,
+	activeSessionId,
+	onNewSession,
+	onSwitchSession,
 }: Props): JSX.Element {
 	if (!visible) return <></>;
 
 	return (
 		<div className="flex h-full min-h-0 w-full flex-1 flex-col bg-editor">
-			<TopBar effort={reasoningEffort} onChange={onReasoningEffortChange} />
+			<TopBar
+				effort={reasoningEffort}
+				onChange={onReasoningEffortChange}
+				sessionTitle={sessionTitle}
+				sessions={sessions}
+				activeSessionId={activeSessionId}
+				onNewSession={onNewSession}
+				onSwitchSession={onSwitchSession}
+			/>
 			<section
 				className="messages flex flex-1 min-h-0 flex-col gap-2 overflow-y-auto bg-editor px-4 pb-2"
 				aria-label="Agent messages"

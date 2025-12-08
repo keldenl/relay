@@ -52,4 +52,5 @@ the user confirms that it is complete and correct.
 - Font for overlay text relies on `var(--vscode-font-family, var(--monaco-monospace-font, system-ui))` to avoid fallback to Times.
 - Codex CLI webview runner: see `extensions/codex-cli/src/agentView.ts`; simulation mode currently enabled (real exec commented).
 - Repo is a VS Code fork branded "Relay" aimed at non-coders; main upstream docs remain in `README-VSCODE.md`.
-- Codex extension now depends on `@openai/codex-sdk`; `codexClient.ts` instantiates the SDK, reuses per-workspace threads (stored in `globalState`), and maps reasoning effort; CLI auth still shells to `codex login/status`, preferring a bundled binary if present.
+- Codex extension depends on `@openai/codex-sdk`; `codexClient.ts` instantiates the SDK, reuses per-workspace threads (stored in `globalState`), and maps reasoning effort; CLI auth shells to `codex login/status`, preferring a bundled binary if present.
+- Hygiene gotchas: new files need MIT header; curly braces required on single-line conditionals; run `npm run precommit` to satisfy formatting.

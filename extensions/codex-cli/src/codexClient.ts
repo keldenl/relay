@@ -7,7 +7,7 @@ import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import type { Codex, Thread, ThreadEvent, ModelReasoningEffort } from '@openai/codex-sdk';
+import type { Codex, Thread, ThreadEvent, ModelReasoningEffort, ThreadOptions } from '@openai/codex-sdk';
 type CodexConstructor = typeof import('@openai/codex-sdk').Codex;
 import { getBundledCodexPath } from './paths';
 import type { ReasoningEffortOption } from './shared/messages';
@@ -31,7 +31,6 @@ export class CodexClient {
 	private codexCtorPromise: Promise<CodexConstructor> | undefined;
 	private codexInstance: Codex | undefined;
 	private readonly threads = new Map<string, ThreadRecord>();
-	private readonly threadIdKeyPrefix = 'codex.threadId';
 
 	constructor(private readonly context: vscode.ExtensionContext) {
 	}
@@ -40,20 +39,20 @@ export class CodexClient {
 		prompt: string,
 		cwd: string,
 		onEvent: (evt: CodexEvent) => void,
-		options?: { reasoningEffort?: ReasoningEffortOption }
+		options?: { reasoningEffort?: ReasoningEffortOption; sessionId?: string; threadId?: string; onThreadId?: (id: string) => void }
 	): Promise<void> {
-		const thread = await this.getOrCreateThread(cwd, options?.reasoningEffort);
+		const thread = await this.getOrCreateThread(cwd, options?.sessionId, options?.threadId, options?.reasoningEffort);
 		const { events } = await thread.runStreamed(prompt);
 
 		for await (const evt of events) {
 			onEvent(evt);
 			if (evt.type === 'thread.started' && thread.id) {
-				await this.storeThreadId(cwd, thread.id);
+				options?.onThreadId?.(thread.id);
 			}
 		}
 
 		if (thread.id) {
-			await this.storeThreadId(cwd, thread.id);
+			options?.onThreadId?.(thread.id);
 		}
 	}
 
@@ -124,8 +123,8 @@ export class CodexClient {
 		});
 	}
 
-	private async getOrCreateThread(cwd: string, effort?: ReasoningEffortOption): Promise<Thread> {
-		const key = this.workspaceKey(cwd);
+	private async getOrCreateThread(cwd: string, sessionId: string | undefined, storedThreadId: string | undefined, effort?: ReasoningEffortOption): Promise<Thread> {
+		const key = sessionId ?? this.workspaceKey(cwd);
 		const desiredEffort = this.mapReasoningEffort(effort);
 
 		const existing = this.threads.get(key);
@@ -133,19 +132,18 @@ export class CodexClient {
 			return existing.thread;
 		}
 
-		const storedId = this.context.globalState.get<string>(this.threadIdStorageKey(key));
-		const threadOptions = {
+		const threadOptions: ThreadOptions = {
 			workingDirectory: cwd,
-			sandboxMode: 'workspace-write' as const,
+			sandboxMode: 'workspace-write',
 			skipGitRepoCheck: true,
 			modelReasoningEffort: desiredEffort,
 		};
 
 		const codex = await this.getCodex();
 		let thread: Thread;
-		if (storedId) {
+		if (storedThreadId) {
 			try {
-				thread = codex.resumeThread(storedId, threadOptions);
+				thread = codex.resumeThread(storedThreadId, threadOptions);
 			} catch {
 				thread = codex.startThread(threadOptions);
 			}
@@ -167,17 +165,8 @@ export class CodexClient {
 		return option as ModelReasoningEffort;
 	}
 
-	private async storeThreadId(cwd: string, id: string): Promise<void> {
-		const key = this.workspaceKey(cwd);
-		await this.context.globalState.update(this.threadIdStorageKey(key), id);
-	}
-
 	private workspaceKey(cwd: string): string {
 		return path.resolve(cwd);
-	}
-
-	private threadIdStorageKey(workspaceKey: string): string {
-		return `${this.threadIdKeyPrefix}:${workspaceKey}`;
 	}
 
 	private resolvePreferredCodexPath(): string | undefined {

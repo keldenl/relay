@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { useEffect, useReducer } from 'react';
-import type { AgentMessage, AuthStatus, HostToWebviewMessage, ReasoningEffortOption } from '@shared/messages';
+import type { AgentMessage, AuthStatus, HostToWebviewMessage, ReasoningEffortOption, SessionListItem } from '@shared/messages';
 import vscode, { postMessage } from '../vscode';
 
 type State = {
@@ -13,6 +13,8 @@ type State = {
 	reasoning: string;
 	messages: AgentMessage[];
 	reasoningEffort: ReasoningEffortOption;
+	sessions: SessionListItem[];
+	activeSessionId?: string;
 };
 
 type Action =
@@ -21,7 +23,8 @@ type Action =
 	| { type: 'setReasoning'; text: string }
 	| { type: 'appendMessage'; message: AgentMessage }
 	| { type: 'clear' }
-	| { type: 'setReasoningEffort'; effort: ReasoningEffortOption };
+	| { type: 'setReasoningEffort'; effort: ReasoningEffortOption }
+	| { type: 'setSessionState'; sessions: SessionListItem[]; activeSessionId: string; messages: AgentMessage[] };
 
 const initialState: State = {
 	auth: { status: 'checking' },
@@ -29,6 +32,7 @@ const initialState: State = {
 	reasoning: '',
 	messages: [],
 	reasoningEffort: 'medium',
+	sessions: [],
 };
 
 function reducer(state: State, action: Action): State {
@@ -40,11 +44,21 @@ function reducer(state: State, action: Action): State {
 		case 'setReasoning':
 			return { ...state, reasoning: action.text };
 		case 'appendMessage':
+			if (action.message.sessionId && state.activeSessionId && action.message.sessionId !== state.activeSessionId) {
+				return state;
+			}
 			return { ...state, messages: [...state.messages, action.message] };
 		case 'setReasoningEffort':
 			return { ...state, reasoningEffort: action.effort };
 		case 'clear':
 			return { ...state, messages: [], reasoning: '' };
+		case 'setSessionState':
+			return {
+				...state,
+				sessions: action.sessions,
+				activeSessionId: action.activeSessionId,
+				messages: action.messages,
+			};
 		default:
 			return state;
 	}
@@ -88,6 +102,14 @@ function handleHostMessage(dispatch: React.Dispatch<Action>, message: HostToWebv
 		case 'reasoningState':
 			dispatch({ type: 'setReasoningEffort', effort: message.effort });
 			return;
+		case 'sessionState':
+			dispatch({
+				type: 'setSessionState',
+				sessions: message.sessions ?? [],
+				activeSessionId: message.activeSessionId,
+				messages: message.messages ?? [],
+			});
+			return;
 		default:
 			return;
 	}
@@ -126,9 +148,13 @@ export function useHostMessaging() {
 		postMessage({ type: 'setReasoningEffort', effort });
 	};
 
+	const newSession = (title?: string) => postMessage({ type: 'newSession', title });
+	const switchSession = (sessionId: string) => postMessage({ type: 'switchSession', sessionId });
+	const renameSession = (sessionId: string, title: string) => postMessage({ type: 'renameSession', sessionId, title });
+
 	return {
 		state,
-		handlers: { submitPrompt, login, requestStatus, setReasoningEffort },
+		handlers: { submitPrompt, login, requestStatus, setReasoningEffort, newSession, switchSession, renameSession },
 		postMessage: vscode.postMessage,
 	};
 }
