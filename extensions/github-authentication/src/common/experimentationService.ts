@@ -26,6 +26,7 @@ export class ExperimentationTelemetry implements IExperimentationTelemetry {
 				targetPopulation = TargetPopulation.Internal;
 				break;
 			case 'code-oss':
+			case 'relay':
 				targetPopulation = TargetPopulation.Team;
 				break;
 			default:
