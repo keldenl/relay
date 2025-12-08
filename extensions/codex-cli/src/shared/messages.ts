@@ -7,6 +7,7 @@ export type AgentMessageRole = 'assistant' | 'command' | 'system' | 'user';
 
 export type AuthStatus = 'checking' | 'loggedIn' | 'loggedOut' | 'loggingIn' | 'error';
 export type ReasoningEffortOption = 'low' | 'medium' | 'high' | 'xhigh';
+export type CodexModelId = 'gpt-5.1-codex-max' | 'gpt-5.1';
 
 export interface ParsedCommandPart {
 	kind?: string;
@@ -55,6 +56,7 @@ export type HostToWebviewMessage =
 	| { type: 'reasoningUpdate'; text?: string }
 	| { type: 'authState'; status: AuthStatus; detail?: string }
 	| { type: 'reasoningState'; effort: ReasoningEffortOption }
+	| { type: 'modelState'; model: CodexModelId }
 	| { type: 'sessionState'; activeSessionId: string; sessions: SessionListItem[]; messages: AgentMessage[] };
 
 export type WebviewToHostMessage =
@@ -62,10 +64,20 @@ export type WebviewToHostMessage =
 	| { type: 'requestLogin' }
 	| { type: 'requestStatus' }
 	| { type: 'setReasoningEffort'; effort: ReasoningEffortOption }
+	| { type: 'setModel'; model: CodexModelId }
+	| { type: 'setModelAndEffort'; model: CodexModelId; effort: ReasoningEffortOption }
 	| { type: 'openPath'; path: string; isDir?: boolean; selection?: { start: number; end?: number } }
 	| { type: 'newSession'; title?: string }
 	| { type: 'switchSession'; sessionId: string }
 	| { type: 'renameSession'; sessionId: string; title: string };
+
+function isReasoningEffort(effort: unknown): effort is ReasoningEffortOption {
+	return effort === 'low' || effort === 'medium' || effort === 'high' || effort === 'xhigh';
+}
+
+function isCodexModelId(model: unknown): model is CodexModelId {
+	return model === 'gpt-5.1-codex-max' || model === 'gpt-5.1';
+}
 
 export function isWebviewToHostMessage(value: unknown): value is WebviewToHostMessage {
 	if (!value || typeof value !== 'object') {
@@ -75,8 +87,16 @@ export function isWebviewToHostMessage(value: unknown): value is WebviewToHostMe
 	const msg = value as Partial<WebviewToHostMessage>;
 
 	if (msg.type === 'setReasoningEffort') {
-		const effort = (msg as { effort?: ReasoningEffortOption }).effort;
-		return effort === 'low' || effort === 'medium' || effort === 'high' || effort === 'xhigh';
+		return isReasoningEffort((msg as { effort?: ReasoningEffortOption }).effort);
+	}
+
+	if (msg.type === 'setModel') {
+		return isCodexModelId((msg as { model?: CodexModelId }).model);
+	}
+
+	if (msg.type === 'setModelAndEffort') {
+		const candidate = msg as { model?: CodexModelId; effort?: ReasoningEffortOption };
+		return isCodexModelId(candidate.model) && isReasoningEffort(candidate.effort);
 	}
 
 	if (msg.type === 'submitPrompt') {

@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import React from 'react';
-import type { AgentMessage, ReasoningEffortOption, SessionListItem } from '@shared/messages';
+import type { AgentMessage, CodexModelId, ReasoningEffortOption, SessionListItem } from '@shared/messages';
 import MessageList from './MessageList';
 import TopBar from './TopBar';
 import { ArrowUp } from 'lucide-react';
@@ -18,7 +18,10 @@ interface Props {
 	onSubmit: (event?: React.FormEvent) => void;
 	listRef: React.RefObject<HTMLDivElement>;
 	reasoningEffort: ReasoningEffortOption;
+	model: CodexModelId;
 	onReasoningEffortChange: (effort: ReasoningEffortOption) => void;
+	onModelChange: (model: CodexModelId) => void;
+	onModelAndEffortChange: (model: CodexModelId, effort: ReasoningEffortOption) => void;
 	sessionTitle: string;
 	sessions: SessionListItem[];
 	activeSessionId?: string;
@@ -35,7 +38,10 @@ export default function AgentShell({
 	onSubmit,
 	listRef,
 	reasoningEffort,
+	model,
 	onReasoningEffortChange,
+	onModelChange,
+	onModelAndEffortChange,
 	sessionTitle,
 	sessions,
 	activeSessionId,
@@ -48,7 +54,10 @@ export default function AgentShell({
 		<div className="flex h-full min-h-0 w-full flex-1 flex-col bg-editor">
 			<TopBar
 				effort={reasoningEffort}
+				model={model}
 				onChange={onReasoningEffortChange}
+				onModelChange={onModelChange}
+				onModelAndEffortChange={onModelAndEffortChange}
 				sessionTitle={sessionTitle}
 				sessions={sessions}
 				activeSessionId={activeSessionId}

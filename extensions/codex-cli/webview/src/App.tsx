@@ -16,7 +16,7 @@ export default function App(): JSX.Element {
 	const listRef = useRef<HTMLDivElement | null>(null);
 
 	const { state, handlers, postMessage } = useHostMessaging();
-	const { auth, busy, reasoning, messages, reasoningEffort, sessions, activeSessionId } = state;
+	const { auth, busy, reasoning, messages, reasoningEffort, model, sessions, activeSessionId } = state;
 
 	useAutoOpen(messages, postMessage);
 	useAutoScroll(listRef, [messages, reasoning, busy]);
@@ -56,7 +56,10 @@ export default function App(): JSX.Element {
 				onSubmit={onSubmit}
 				listRef={listRef}
 				reasoningEffort={reasoningEffort}
+				model={model}
 				onReasoningEffortChange={handlers.setReasoningEffort}
+				onModelChange={handlers.setModel}
+				onModelAndEffortChange={handlers.setModelAndEffort}
 				sessionTitle={activeSessionTitle}
 				sessions={sessions}
 				activeSessionId={activeSessionId}

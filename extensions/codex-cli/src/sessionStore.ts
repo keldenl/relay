@@ -5,7 +5,7 @@
 
 import * as path from 'path';
 import * as vscode from 'vscode';
-import type { AgentMessage } from './shared/messages';
+import type { AgentMessage, CodexModelId } from './shared/messages';
 import { randomUUID } from 'crypto';
 
 const SESSION_KEY_PREFIX = 'codex.sessions';
@@ -22,6 +22,7 @@ export type StoredSession = {
 	createdAt: number;
 	updatedAt: number;
 	messages: AgentMessage[];
+	model?: CodexModelId;
 };
 
 type SessionState = {
@@ -59,9 +60,9 @@ export class SessionStore {
 		return { sessions: [created], activeId: created.id };
 	}
 
-	async createNewSession(workspaceKey: string, title?: string, threadId?: string): Promise<StoredSession> {
+	async createNewSession(workspaceKey: string, title?: string, threadId?: string, model?: CodexModelId): Promise<StoredSession> {
 		const state = await this.ensureState(workspaceKey);
-		const created = this.createSession(title ?? this.defaultTitle(), threadId);
+		const created = this.createSession(title ?? this.defaultTitle(), threadId, model);
 		const sessions = this.pruneSessions([...state.sessions, created]);
 		await this.saveState(workspaceKey, { sessions, activeId: created.id });
 		return created;
@@ -84,6 +85,12 @@ export class SessionStore {
 	async updateThreadId(workspaceKey: string, sessionId: string, threadId: string): Promise<void> {
 		const state = await this.ensureState(workspaceKey);
 		const sessions = state.sessions.map((s) => (s.id === sessionId ? { ...s, threadId, updatedAt: Date.now() } : s));
+		await this.saveState(workspaceKey, { sessions, activeId: state.activeId ?? sessionId });
+	}
+
+	async updateModel(workspaceKey: string, sessionId: string, model: CodexModelId): Promise<void> {
+		const state = await this.ensureState(workspaceKey);
+		const sessions = state.sessions.map((s) => (s.id === sessionId ? { ...s, model, updatedAt: Date.now() } : s));
 		await this.saveState(workspaceKey, { sessions, activeId: state.activeId ?? sessionId });
 	}
 
@@ -133,7 +140,7 @@ export class SessionStore {
 		await this.context.globalState.update(`${LAST_ACTIVE_KEY_PREFIX}:${workspaceKey}`, state.activeId);
 	}
 
-	private createSession(title: string, threadId?: string): StoredSession {
+	private createSession(title: string, threadId?: string, model?: CodexModelId): StoredSession {
 		const now = Date.now();
 		return {
 			id: randomUUID(),
@@ -142,6 +149,7 @@ export class SessionStore {
 			createdAt: now,
 			updatedAt: now,
 			messages: [],
+			model,
 		};
 	}
 

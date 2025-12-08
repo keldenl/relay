@@ -10,7 +10,7 @@ import * as vscode from 'vscode';
 import type { Codex, Thread, ThreadEvent, ModelReasoningEffort, ThreadOptions } from '@openai/codex-sdk';
 type CodexConstructor = typeof import('@openai/codex-sdk').Codex;
 import { getBundledCodexPath } from './paths';
-import type { ReasoningEffortOption } from './shared/messages';
+import type { CodexModelId, ReasoningEffortOption } from './shared/messages';
 
 export type CodexEvent = ThreadEvent;
 
@@ -25,6 +25,7 @@ export interface LoginStatusResult {
 type ThreadRecord = {
 	thread: Thread;
 	reasoningEffort?: ModelReasoningEffort;
+	model?: CodexModelId;
 };
 
 export class CodexClient {
@@ -39,9 +40,9 @@ export class CodexClient {
 		prompt: string,
 		cwd: string,
 		onEvent: (evt: CodexEvent) => void,
-		options?: { reasoningEffort?: ReasoningEffortOption; sessionId?: string; threadId?: string; onThreadId?: (id: string) => void }
+		options?: { reasoningEffort?: ReasoningEffortOption; model?: CodexModelId; sessionId?: string; threadId?: string; onThreadId?: (id: string) => void }
 	): Promise<void> {
-		const thread = await this.getOrCreateThread(cwd, options?.sessionId, options?.threadId, options?.reasoningEffort);
+		const thread = await this.getOrCreateThread(cwd, options?.sessionId, options?.threadId, options?.reasoningEffort, options?.model);
 		const { events } = await thread.runStreamed(prompt);
 
 		for await (const evt of events) {
@@ -123,12 +124,19 @@ export class CodexClient {
 		});
 	}
 
-	private async getOrCreateThread(cwd: string, sessionId: string | undefined, storedThreadId: string | undefined, effort?: ReasoningEffortOption): Promise<Thread> {
+	private async getOrCreateThread(
+		cwd: string,
+		sessionId: string | undefined,
+		storedThreadId: string | undefined,
+		effort?: ReasoningEffortOption,
+		model?: CodexModelId
+	): Promise<Thread> {
 		const key = sessionId ?? this.workspaceKey(cwd);
 		const desiredEffort = this.mapReasoningEffort(effort);
+		const desiredModel = model;
 
 		const existing = this.threads.get(key);
-		if (existing && existing.reasoningEffort === desiredEffort) {
+		if (existing && existing.reasoningEffort === desiredEffort && existing.model === desiredModel) {
 			return existing.thread;
 		}
 
@@ -137,11 +145,15 @@ export class CodexClient {
 			sandboxMode: 'workspace-write',
 			skipGitRepoCheck: true,
 			modelReasoningEffort: desiredEffort,
+			model: desiredModel,
 		};
 
 		const codex = await this.getCodex();
 		let thread: Thread;
-		if (storedThreadId) {
+		if (storedThreadId && desiredModel) {
+			// If a specific model is requested, prefer starting fresh to guarantee configuration.
+			thread = codex.startThread(threadOptions);
+		} else if (storedThreadId) {
 			try {
 				thread = codex.resumeThread(storedThreadId, threadOptions);
 			} catch {
@@ -151,7 +163,7 @@ export class CodexClient {
 			thread = codex.startThread(threadOptions);
 		}
 
-		this.threads.set(key, { thread, reasoningEffort: desiredEffort });
+		this.threads.set(key, { thread, reasoningEffort: desiredEffort, model: desiredModel });
 		return thread;
 	}
 
